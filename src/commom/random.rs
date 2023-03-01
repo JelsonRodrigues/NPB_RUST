@@ -38,4 +38,33 @@ impl Random {
         let difference = upper_bound - lower_bound;
         return Ok(number * difference + lower_bound);
     }
+
+    /*
+    This function return the seed value that will be state, after generating 
+    nth random values from the current seed
+     */
+    pub fn get_nth_seed_value(&self, nth_position:u64) -> u64 {
+        get_nth_seed_value(self.state, nth_position)
+    }
+}
+
+/*
+    This function return the seed value that will be state, after generating 
+    nth random values from the specified seed
+*/
+pub fn get_nth_seed_value(starting_seed : u64, nth_position:u64) -> u64 {
+    // This algorithm is based on the original paper
+    let m = f64::log2(nth_position as f64) as u64 + 1;
+    let mut k = nth_position;
+    let mut b = starting_seed;
+    let mut t = MULTIPLIER;
+    for _ in 0..m {
+        if k % 2 != 0 { // k is odd
+            b = b.wrapping_mul(t) % MODULUS;
+        }
+        k = k/2;
+        t = t.wrapping_pow(2) % MODULUS;
+    }
+
+    return  b;
 }
