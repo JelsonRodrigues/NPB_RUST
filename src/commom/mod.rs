@@ -2,6 +2,7 @@ pub mod random;
 pub mod timer;
 
 pub mod classes {
+    #[derive(Debug, Clone, Copy)]
     pub enum Class {
         S,
         A,
@@ -15,6 +16,7 @@ pub mod classes {
 
 pub mod benchmarks {
     use crate::Class;
+    #[derive(Debug, Clone, Copy)]
     pub enum Benchmark {
         EP(Class),
     }

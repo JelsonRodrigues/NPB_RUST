@@ -4,9 +4,8 @@ use commom::random::{Random, get_nth_seed_value};
 use commom::classes::Class;
 use commom::benchmarks::Benchmark;
 use std::borrow::Borrow;
-use std::thread::Thread;
 use std::time::Instant;
-use std::{thread::{available_parallelism, JoinHandle}, cmp::max};
+use std::{thread::{available_parallelism, JoinHandle}};
 use commom::timer::show_time;
 
 // This value comes from the NASA paper https://www.nas.nasa.gov/assets/pdf/techreports/1994/rnr-94-007.pdf
@@ -31,7 +30,6 @@ fn main() {
     // Creation of threads
     for index in 0..number_of_threads {
         let thread_seed_sequence = 2 * computations_per_thread * index;
-        let random = Random::new(get_nth_seed_value(SEED, thread_seed_sequence));
         
         // If the total number cannot be divided evenly between the number of threads, ((2^28) / 6 = 44.739.242,67)
         // each thread will do the integer part of the division and the last thread will do the remaining job
@@ -42,7 +40,7 @@ fn main() {
         let computations_per_thread = if index == number_of_threads - 1 {n - computations_per_thread * index} else {computations_per_thread};
 
         let thread_handler = std::thread::spawn(move || {
-            calculate(random, computations_per_thread)
+            calculate(get_nth_seed_value(SEED, thread_seed_sequence), computations_per_thread)
         });
 
         threads_handler.push(thread_handler);
@@ -68,6 +66,7 @@ fn main() {
     // Verification part
 
     println!("\nThreads {number_of_threads}");
+    println!("Class {:?}", class);
     println!("Sum X {sum_x}");
     println!("Sum y {sum_y}");
     println!("Q {:?}", Q);
@@ -81,21 +80,21 @@ fn main() {
 
 // Return the sum of values in each class of the Q, a Vec<u64>
 // and a tuple with the sum of Xk and Yk values
-fn calculate(mut random: Random, number_of_calculations:u64) -> (Vec<u64>, (f64, f64)) {
+fn calculate(seed: u64, number_of_calculations:u64) -> (Vec<u64>, (f64, f64)) {
+    let mut random = Random::new(seed);
     let mut Q = vec![0_u64;10];
     let mut sum_x_k = 0.0;
     let mut sum_y_k = 0.0;
     
-    let transform_clojure = |value:f64| -> f64 {2.0*value - 1.0};
-
-    for _ in 0..number_of_calculations {
+    let transform_clojure = |value:f64| -> f64 {2.0 * value - 1.0};
+    for _ in 0..=number_of_calculations {
         let x = transform_clojure(random.next_f64());
         let y = transform_clojure(random.next_f64());
 
-        let t = x.powf(2.0) + y.powf(2.0);
+        let t = x.powi(2) + y.powi(2);
 
         if t <= 1.0 {
-            let formula = f64::sqrt((-2.0*t.ln()) / t);
+            let formula = f64::sqrt(-2.0*t.ln() / t);
             let x_k = x * formula;
             let y_k = y * formula;
             
@@ -108,7 +107,5 @@ fn calculate(mut random: Random, number_of_calculations:u64) -> (Vec<u64>, (f64,
         }
     }
 
-
-    random.next_f64();
     return (Q, (sum_x_k, sum_y_k));
 }

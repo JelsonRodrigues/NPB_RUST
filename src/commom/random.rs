@@ -4,7 +4,7 @@
 const MULTIPLIER: u64 = 1_220_703_125;      // 5^13
 const MODULUS: u64 = 70_368_744_177_664;    // 2^46
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Random {
     state: u64,
 }
@@ -55,16 +55,19 @@ impl Random {
 pub fn get_nth_seed_value(starting_seed : u64, nth_position:u64) -> u64 {
     // This algorithm is based on the original paper
     let m = f64::log2(nth_position as f64) as u64 + 1;
-    let mut k = nth_position;
     let mut b = starting_seed;
     let mut t = MULTIPLIER;
-    for _ in 0..m {
-        if k % 2 != 0 { // k is odd
+    for i in 0..m {
+        if nth_position & (1 << i) != 0 { // the i-th bit is 1
             b = b.wrapping_mul(t) % MODULUS;
         }
-        k = k/2;
         t = t.wrapping_pow(2) % MODULUS;
     }
 
     return  b;
+}
+
+// This method is faster than the normal version, but the maximum expoent must be 32 bits
+pub fn get_nth_seed_value_u32(starting_seed : u64, nth_position:u32) -> u64 {
+    MULTIPLIER.wrapping_pow(nth_position).wrapping_mul(starting_seed) % MODULUS
 }
