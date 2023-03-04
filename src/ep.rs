@@ -9,12 +9,12 @@ use std::{thread::{available_parallelism, JoinHandle}};
 use commom::timer::show_time;
 
 // This value comes from the NASA paper https://www.nas.nasa.gov/assets/pdf/techreports/1994/rnr-94-007.pdf
-const SEED: u64 = 271_828_813;
+const SEED: u64 = 271_828_183;
 
 fn main() {
     // Setup benchmark values
     // todo!("Read class from arguments");
-    let class = Class::A;
+    let class = Class::C;
     let benchmark = Benchmark::EP(class);
     let n = benchmark.get_difficulty();
     
@@ -87,11 +87,12 @@ fn calculate(seed: u64, number_of_calculations:u64) -> (Vec<u64>, (f64, f64)) {
     let mut sum_y_k = 0.0;
     
     let transform_clojure = |value:f64| -> f64 {2.0 * value - 1.0};
-    for _ in 0..=number_of_calculations {
+    for _ in 0..number_of_calculations {
         let x = transform_clojure(random.next_f64());
         let y = transform_clojure(random.next_f64());
 
-        let t = x.powi(2) + y.powi(2);
+        // let t = x.powi(2) + y.powi(2);
+        let t = x * x + y * y;
 
         if t <= 1.0 {
             let formula = f64::sqrt(-2.0*t.ln() / t);
