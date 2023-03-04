@@ -5,6 +5,7 @@ pub mod classes {
     #[derive(Debug, Clone, Copy)]
     pub enum Class {
         S,
+        W,
         A,
         B,
         C,
@@ -27,6 +28,7 @@ pub mod benchmarks {
                 Benchmark::EP(class) => {
                     match class {
                         Class::S => return 1 << 24,    // 2 ^ 24
+                        Class::W => return 1 << 25,    // 2 ^ 25
                         Class::A => return 1 << 28,    // 2 ^ 28
                         Class::B => return 1 << 30,    // 2 ^ 30
                         Class::C => return 1 << 32,    // 2 ^ 32
