@@ -42,7 +42,7 @@ pub mod benchmarks {
             }
         }
 
-        pub fn ep_verify(&self, sum_x: f64, sum_y: f64, gaussian_count: f64) -> bool{
+        pub fn ep_verify(&self, sum_x: f64, sum_y: f64, gaussian_count: f64) -> bool {
             let mut verified = true;
             let mut sum_x_verify_value = 0.0;
             let mut sum_y_verify_value = 0.0;
@@ -50,8 +50,8 @@ pub mod benchmarks {
 
             //reference values used comes from the NASA paper https://www.nas.nasa.gov/assets/pdf/techreports/1994/rnr-94-007.pdf
 
-            if let Benchmark::EP(class) = self{
-                match  class{
+            if let Benchmark::EP(class) = self {
+                match  class {
                     Class::S =>  {
                         sum_x_verify_value = -3.247834652034740e+3;
                         sum_y_verify_value = -6.958407078382297e+3;
@@ -97,7 +97,7 @@ pub mod benchmarks {
                 verified = false;
             }          
 
-            if(verified){
+            if(verified) {
                 let sum_x_err = ((sum_x - sum_x_verify_value) / sum_x_verify_value).abs();
                 let sum_y_err = ((sum_y - sum_y_verify_value) / sum_y_verify_value).abs();
                 let gaussian_count_err = ((gaussian_count - gaussian_count_verify_value) / gaussian_count_verify_value).abs();
