@@ -101,7 +101,6 @@ pub mod benchmarks {
                 let sum_x_err = ((sum_x - sum_x_verify_value) / sum_x_verify_value).abs();
                 let sum_y_err = ((sum_y - sum_y_verify_value) / sum_y_verify_value).abs();
                 let gaussian_count_err = ((gaussian_count - gaussian_count_verify_value) / gaussian_count_verify_value).abs();
-                println!("X.err: {}\nY.err: {}\nCount.err: {}", sum_x_err, sum_y_err, gaussian_count_err);
                 verified = ((sum_x_err <= EPSILON) && (sum_y_err <= EPSILON) && (gaussian_count_err <= EPSILON));
             }
 
