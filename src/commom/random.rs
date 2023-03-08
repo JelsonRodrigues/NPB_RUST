@@ -68,6 +68,7 @@ pub fn get_nth_seed_value(starting_seed : u64, nth_position:u64) -> u64 {
 }
 
 // This method is faster than the normal version, but the maximum expoent must be 32 bits
+#[allow(dead_code)]
 pub fn get_nth_seed_value_u32(starting_seed : u64, nth_position:u32) -> u64 {
     MULTIPLIER.wrapping_pow(nth_position).wrapping_mul(starting_seed) % MODULUS
 }

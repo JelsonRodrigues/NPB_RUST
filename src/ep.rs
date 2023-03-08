@@ -14,12 +14,9 @@ const SEED: u64 = 271_828_183;
 fn main() {
     // Setup benchmark values
     // todo!("Read class from arguments");
-    let class = Class::C;
+    let class = Class::A;
     let benchmark = Benchmark::EP(class);
     let n = benchmark.get_difficulty();
-    
-    // Value from the oficial fortran implementation
-    let epsilon = 1.0e-8;
     
     // todo!("Read number of threads to use from arguments");
     let number_of_threads = available_parallelism().expect("Unable to get the total number of threads").get() as u64;
@@ -33,7 +30,7 @@ fn main() {
         
         // If the total number cannot be divided evenly between the number of threads, ((2^28) / 6 = 44.739.242,67)
         // each thread will do the integer part of the division and the last thread will do the remaining job
-        // This is an lazy way of dividing the job, because is possible to the last thread have
+        // This is a lazy way of dividing the job, because is possible to the last thread have
         // execute more ammount of work that other threads individualy
         // A future thing to do is to redivide the remaining work more evenly between the threads
         // but has to be taken in consideration the seed offset, the way is done now, that is not a problem
@@ -48,15 +45,15 @@ fn main() {
 
     let mut sum_x = 0.0;
     let mut sum_y = 0.0;
-    let mut Q = vec![0_u64;10];
+    let mut q = vec![0_u64;10];
 
     for thread in threads_handler {
         let result = thread.join().expect("Error joining the thread!!!");
 
-        let (local_Q, (local_sum_x, local_sum_y)) = result;
+        let (local_q, (local_sum_x, local_sum_y)) = result;
 
-        (0..Q.len()).for_each(|index| {
-            Q[index] += local_Q[index];
+        (0..q.len()).for_each(|index| {
+            q[index] += local_q[index];
         });
 
         sum_x += local_sum_x;
@@ -64,13 +61,14 @@ fn main() {
     }
 
     // Verification part
-
+    let total_pairs:u64 = (&q).into_iter().sum();
     println!("\nThreads {number_of_threads}");
     println!("Class {:?}", class);
     println!("Sum X {sum_x}");
     println!("Sum y {sum_y}");
-    println!("Q {:?}", Q);
-    println!("Sum of Q {}", Q.into_iter().sum::<u64>());
+    println!("Q {:?}", q);
+    println!("Sum of Q {}", total_pairs);
+    println!("Verified: {}", benchmark.ep_verify(sum_x, sum_y, total_pairs));
 
     let now = Instant::now();
 
@@ -78,11 +76,11 @@ fn main() {
 
 }
 
-// Return the sum of values in each class of the Q, a Vec<u64>
+// Return the sum of values in each class of Q, as a Vec<u64>
 // and a tuple with the sum of Xk and Yk values
 fn calculate(seed: u64, number_of_calculations:u64) -> (Vec<u64>, (f64, f64)) {
     let mut random = Random::new(seed);
-    let mut Q = vec![0_u64;10];
+    let mut q = vec![0_u64;10];
     let mut sum_x_k = 0.0;
     let mut sum_y_k = 0.0;
     
@@ -91,8 +89,7 @@ fn calculate(seed: u64, number_of_calculations:u64) -> (Vec<u64>, (f64, f64)) {
         let x = transform_clojure(random.next_f64());
         let y = transform_clojure(random.next_f64());
 
-        // let t = x.powi(2) + y.powi(2);
-        let t = x * x + y * y;
+        let t = x.powi(2) + y.powi(2);
 
         if t <= 1.0 {
             let formula = f64::sqrt(-2.0*t.ln() / t);
@@ -101,12 +98,12 @@ fn calculate(seed: u64, number_of_calculations:u64) -> (Vec<u64>, (f64, f64)) {
             
             let highest = if x_k.abs() > y_k.abs() {x_k.abs()} else {y_k.abs()};
             let index = highest as usize;
-            Q[index] += 1;
+            q[index] += 1;
 
             sum_x_k += x_k;
             sum_y_k += y_k;
         }
     }
 
-    return (Q, (sum_x_k, sum_y_k));
+    return (q, (sum_x_k, sum_y_k));
 }
