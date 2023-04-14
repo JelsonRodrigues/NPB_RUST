@@ -23,10 +23,8 @@ fn main() {
     // Create the matix and the vectors
     let mut x:Vec<f64> = Vec::with_capacity(n);
     let mut z:Vec<f64> = Vec::with_capacity(n);
-    let mut A: Vec<Vec<f64>> = Vec::new();
-
-    make_A(&mut A);
-
+    let A: Vec<Vec<f64>> = create_matrix(n, non_zeros);
+    
     x.fill(1.0);
     z.fill(0.0);
 
@@ -39,7 +37,10 @@ fn main() {
     }
 }
 
-fn create_matrix(order:usize, non_zeros:usize){
+fn create_matrix(order:usize, non_zeros:usize) -> Vec<Vec<f64>> {
+    let matrix :Vec<Vec<f64>> = Vec::with_capacity(order);
+    
+
     todo!()
 }
 
@@ -91,6 +92,8 @@ fn conjugate_gradient(A:&Vec<Vec<f64>>, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
         add_multiply_self(&mut p, &r, beta);
     }
 
+
+    // The operation I'm performing here is r = || x - Az ||
     // Here i'm using the r vector as a temp to the result of Az
     // r = A * z
     multiply_matrix_by_vector(&A, &z, &mut r);
@@ -107,7 +110,7 @@ fn multiply_vector_by_column(a: &Vec<f64>, b:&Vec<f64>, scalar: f64) -> f64{
     let len = a.len();
     let mut result = 0.0;
     for i in 0..len {
-        result += a[i] * b[i] * scalar;
+        result += a[i] * (b[i] * scalar);
     }
 
     return  result;
@@ -131,8 +134,4 @@ fn add_multiply_self(vector_a: &mut Vec<f64>, vector_b:&Vec<f64>, scalar: f64) {
 // Calculate the magnitude of vector
 fn magnitude(vector:&Vec<f64>) -> f64 {
     multiply_vector_by_column(vector, vector, 1.0).sqrt()
-}
-
-fn make_A(A:&mut Vec<Vec<f64>>) {
-    todo!()
 }
