@@ -14,34 +14,47 @@ const SEED: u64 = 314_159_265;
 
 fn main() {
     // Values for the S class
-    let n:usize = 1400;
-    let iterations = 15;
+    let n:usize = 2;
+    let iterations = 2;
     let lambda = 10.0;
     let non_zeros = 7;
 
 
     // Create the matix and the vectors
-    let mut x:Vec<f64> = Vec::with_capacity(n);
-    let mut z:Vec<f64> = Vec::with_capacity(n);
-    let A: Vec<Vec<f64>> = create_matrix(n, non_zeros);
+    let mut x:Vec<f64> = vec![1.0; n];
+    let mut z:Vec<f64> = vec![0.0; n];
+    let mut A: Vec<Vec<f64>> = create_matrix(n, non_zeros);
     
-    x.fill(1.0);
-    z.fill(0.0);
+    A[0][0] = 2.0;
+    A[0][1] = 3.0;
+    A[1][0] = 1.0;
+    A[1][1] = 4.0;
 
     // Main loop
     for i in 0..iterations {
+        // solve Az = x 
         let r = conjugate_gradient(&A, &mut z, &x);
+
+        // zeta = lambda - 1 / (x * z)
         let zeta = lambda - 1.0 / multiply_vector_by_column(&x, &z, 1.0);
+
+        // Print it, zeta, r
         println!("Iteration = {i}, ||r|| = {r}, zeta = {zeta}");
+
+        // x = z / ||z||
+        // Means that x will be a unit vector of z
         multiply_add_self(&mut x, &z, 1.0 /  magnitude(&z));
     }
 }
 
 fn create_matrix(order:usize, non_zeros:usize) -> Vec<Vec<f64>> {
-    let matrix :Vec<Vec<f64>> = Vec::with_capacity(order);
+    let mut matrix :Vec<Vec<f64>> = Vec::with_capacity(order);
     
+    for _ in 0..order {
+        matrix.push(vec![0.0; order]);
+    }
 
-    todo!()
+    return matrix;
 }
 
 const CONJUGATE_GRADIENT_ITERATIONS :u32 = 25;
@@ -61,17 +74,21 @@ fn conjugate_gradient(A:&Vec<Vec<f64>>, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
     z.fill(0.0);
 
     // Initialize r to x
-    let mut r:Vec<f64> = Vec::with_capacity(x.len());
-    r.clone_from(&x);
+    // let mut r:Vec<f64> = Vec::with_capacity(x.len());
+    // r = x.clone();
+    let mut r = x.to_vec();
 
-    let mut rho = multiply_vector_by_column(&r, &r, 0.0);
+    let mut rho = multiply_vector_by_column(&r, &r, 1.0);
 
-    let mut p:Vec<f64> = Vec::with_capacity(r.len());
-    p.clone_from(&r);
+    // let mut p:Vec<f64> = Vec::with_capacity(r.len());
+    // // p.clone_from(&r);
+    // p = r.clone();
+
+    let mut p  = r.to_vec();
+
 
     // Prealocate for q
-    let mut q : Vec<f64> = Vec::with_capacity(p.len());
-    q.fill(0.0);
+    let mut q : Vec<f64> = vec![0.0; p.len()];
 
     for _ in 1..CONJUGATE_GRADIENT_ITERATIONS {
         // q = Ap
@@ -118,17 +135,33 @@ fn multiply_vector_by_column(a: &Vec<f64>, b:&Vec<f64>, scalar: f64) -> f64{
 
 // Calculate result = matrix * vector
 fn multiply_matrix_by_vector(matrix:&Vec<Vec<f64>>, vector:&Vec<f64>, result:&mut Vec<f64>) {
-    todo!()
+    assert_eq!(matrix[0].len(), vector.len());
+    assert_eq!(matrix.len(), result.len());
+
+    let vec_size = result.len();
+    for i in 0..vec_size {
+        result[i] = multiply_vector_by_column(&matrix[i], vector, 1.0);
+    }
 }
 
 // Compute vector_a = vector_a + vector_b * scalar
 fn multiply_add_self(vector_a: &mut Vec<f64>, vector_b:&Vec<f64>, scalar:f64) {
-    todo!()
+    assert_eq!(vector_a.len(), vector_b.len());
+
+    let len = vector_a.len();
+    for i in 0..len {
+        vector_a[i] = vector_a[i] + vector_b[i] * scalar;
+    }
 }
 
 // Compute vector_a = vector_a * scalar + vector_b
 fn add_multiply_self(vector_a: &mut Vec<f64>, vector_b:&Vec<f64>, scalar: f64) {
-    todo!()
+    assert_eq!(vector_a.len(), vector_b.len());
+
+    let len = vector_a.len();
+    for i in 0..len {
+        vector_a[i] = vector_a[i] * scalar + vector_b[i];
+    }
 }
 
 // Calculate the magnitude of vector
