@@ -4,7 +4,9 @@ use commom::random::{Random, get_nth_seed_value};
 use commom::classes::Class;
 use commom::benchmarks::Benchmark;
 use std::borrow::Borrow;
+use std::ops::Index;
 use std::time::Instant;
+use std::vec;
 use std::{thread::{available_parallelism, JoinHandle}};
 use commom::timer::show_time;
 
@@ -167,4 +169,227 @@ fn add_multiply_self(vector_a: &mut Vec<f64>, vector_b:&Vec<f64>, scalar: f64) {
 // Calculate the magnitude of vector
 fn magnitude(vector:&Vec<f64>) -> f64 {
     multiply_vector_by_column(vector, vector, 1.0).sqrt()
+}
+
+// Get the geometric progression ratio, given that the N term is equal to 0.1
+// and the 1st term is equal to 1.0
+// Return the value x for the expresion log_x(cond) = n
+// that is equal to cond ^ (1.0 / n)
+fn get_ratio(n:usize, cond:f64) -> f64 {
+    return cond.powf(1.0 / n as f64);
+}
+
+// Generate a sparse matrix represented as CSM with
+// a given condition number, main diagonal shift and total number of non zeros
+
+
+fn makea(n:usize, row_non_zeros:usize, cond_number:f64, shift:f64) -> SparseMatrix {
+    let max_non_zeros:usize = n * (row_non_zeros + 1) * (row_non_zeros + 1);
+   
+    // Obtain the smallest power of two that is greater or equal n
+    
+    let power_of_two:usize =  n.next_power_of_two();
+
+    // generate the values and its positions in the sparse matrix, line by line
+    // and add them to the auxiliar matrix. This auxiliar matrix will be basically
+    // an array of randomly generated sparse vectors
+
+    let mut sparse_matrix_aux = SparseMatrix::new(n, n);
+    sparse_matrix_aux.reserve_capacity(max_non_zeros);
+    let mut random_index:usize = 0;
+    let mut random_value:f64 = 0.0;
+    let mut random_generator:Random = Random::new(SEED);
+    
+    for row in 0..n {
+        for zero_value in 0..row_non_zeros {
+            loop {
+                random_index = (random_generator.next_f64() * power_of_two as f64) as usize;
+                if sparse_matrix_aux[(row, random_index)] == 0.0 {
+                    break;
+                }
+            }
+            random_value = random_generator.next_f64();
+            sparse_matrix_aux.set_index_to_value(random_value, row, random_index as usize);
+        }
+        sparse_matrix_aux.set_index_to_value(0.5, row, row);
+    } 
+    if sparse_matrix_aux.get_non_zero_count() > max_non_zeros {
+        panic!("Number of non-zeros generated for the matrix exceeded the maximum defined.\n
+        Non-zero count: {}, maximum non-zeros: {}", sparse_matrix_aux.get_non_zero_count(), max_non_zeros);
+    }
+
+    let mut sparse_matrix = SparseMatrix::new(n, n);
+
+    // Here the sparse matrix will be constructed
+    let mut size = 1.0;
+    let ratio = get_ratio(n, cond_number);
+
+    for row_number in 0..n {
+        let row_as_sparse_vector = sparse_matrix_aux.get_row_as_sparse_vector(row_number);
+
+        for (value, col) in row_as_sparse_vector {
+            let scale = size * value;
+
+            for (value_2, col_2) in row_as_sparse_vector {
+                let va = value_2 * scale;
+                sparse_matrix.set_index_to_value(sparse_matrix[()], row, col)
+            }
+        }
+    }
+
+
+    return sparse_matrix;
+}
+
+
+
+// A sparse matrix CSR compressed
+struct SparseMatrix {
+    // This vector will have the non-zero values of the matrix, 
+    // it's saved the f64 value and the column index of that value
+    values:Vec<(f64, usize)>,
+
+    // This vector saves the pointers for each line
+    rows_pointer:Vec<usize>,
+
+    // Number of rows
+    rows:usize,
+
+    // Number of columns
+    columns:usize,
+
+    // Constant zero value
+    zero_value:f64,
+}
+
+impl SparseMatrix {
+    pub fn new(rows:usize, cols:usize) -> Self {
+        SparseMatrix { values: Vec::new(), rows_pointer: vec![0;rows+1], rows: rows, columns: cols, zero_value: 0.0 } 
+    }
+    
+    pub fn get_non_zero_count(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn multiply_by_vector(&self, vector:&Vec<f64>, result:&mut Vec<f64>) {
+        for index in 0..self.rows {
+            let row_start = self.rows_pointer[index];
+            let row_end = self.rows_pointer[index + 1];
+
+            let mut sum = 0.0;
+            for index_inside_values in row_start..row_end {
+                let (value, col) = self.values[index_inside_values];
+                sum += value * vector[col];
+            }
+            result[index] = sum;
+        }
+    }
+
+
+    pub fn get_row_as_sparse_vector(&self, row : usize) -> &[(f64, usize)] {
+        return &self.values[self.rows_pointer[row]..self.rows_pointer[row+1]];
+    }
+
+    pub fn multiply_row_by_vector(&self, row:usize, vector:&Vec<f64>) -> f64 {
+        if self.rows <= row {
+            panic!("Index of row {row} is out of bounds {}", self.rows);
+        }
+        if self.columns < vector.len() {
+            panic!("For multiplying matrix row by a vector column, 
+            the size of each row (i.e the number of columns in the matrix) must be exactly the size of the vector column!!
+            Found matrix row len is = {}, but vector len is = {}
+            ", self.columns, vector.len());
+        }
+
+        let row_start = self.rows_pointer[row];
+        let row_end = self.rows_pointer[row+1];
+        
+        let mut sum : f64 = 0.0;
+        if row_end - row_start > 0 {
+            for i in row_start..row_end {
+                let (value, index) = self.values[i];
+                sum += value * vector[index];
+            }
+        }
+
+        return sum;
+    }
+
+    pub fn reserve_capacity(&mut self, size:usize){
+        self.values.reserve(size);
+    }
+
+    pub fn set_index_to_value(&mut self, value:f64, row:usize, col:usize) {
+        // Check if the index is already a non-zero value,
+        // if it is, then change the value
+        
+        if self.rows <= row || self.columns <= col {
+            panic!("Index [{row}][{col}] out of bounds!!!");
+        }
+        
+        let row_start = self.rows_pointer[row];
+        let row_end = self.rows_pointer[row + 1];
+
+        // Seach for the column in the row
+        let mut index = 0;
+        let mut found = false;
+        for i in row_start..row_end {
+            if self.values[i].1 == col {
+                index = i;
+                found = true;
+            }
+        }
+        
+        if found {
+            self.values[index] = (value, col);
+        }
+        else {
+            self.values.push((0.0, 0));
+            self.values[row_end..].rotate_right(1);
+            
+            // Insert in last position of the row
+            self.values[row_end] = (value, col);
+
+            // Insert sorted in the row
+            for index in (row_start+1..row_end).rev() {
+                if self.values[index].1 < self.values[index+1].1{
+                    self.values.swap(index, index + 1);
+                }
+                else {
+                    break;
+                }
+            }
+            
+            let rows_pointer_len = self.rows_pointer.len();
+            for index in row_end..rows_pointer_len {
+                self.rows_pointer[index] += 1;
+            }
+        }
+    }
+}
+
+impl Index<(usize, usize)> for SparseMatrix {
+    type Output = f64;
+
+    fn index(&self, index: (usize, usize)) -> &Self::Output {
+        // Check index is in bounds
+        if self.rows <= index.0 || self.columns <= index.1 {
+            panic!("Index out of bounds!!!");
+        }
+        else {
+            // check if its a nonzero value, otherwise return 0.0
+            let start = self.rows_pointer[index.0];
+            let end = self.rows_pointer[index.0 + 1];
+
+            // This line lengh is not 0
+            if end - start > 0 {
+                for (value, col) in &self.values[start..end] {
+                    if col == &index.1 {
+                        return value;
+                    }
+                }
+            }
+        }
+        return &self.zero_value;
+    }
 }
