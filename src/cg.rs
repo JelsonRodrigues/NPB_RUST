@@ -16,16 +16,15 @@ const SEED: u64 = 314_159_265;
 
 fn main() {
     // Values for the S class
-    let n:usize = 2;
-    let iterations = 2;
+    let n:usize = 1400;
+    let iterations = 15;
     let lambda = 10.0;
     let non_zeros = 7;
-    let cond_number = 1.5; // ?????
 
     // Create the matix and the vectors
     let mut x:Vec<f64> = vec![1.0; n];
     let mut z:Vec<f64> = vec![0.0; n];
-    let mut A = makea(n, non_zeros, cond_number);
+    let mut A = makea(n, non_zeros, lambda);
     
     // Main loop
     for i in 0..iterations {
@@ -36,7 +35,7 @@ fn main() {
         let zeta = lambda - 1.0 / multiply_vector_by_column(&x, &z, 1.0);
 
         // Print it, zeta, r
-        println!("Iteration = {i}, ||r|| = {r}, zeta = {zeta}");
+        println!("Iteration = {}, ||r|| = {r}, zeta = {zeta}", i+1);
 
         // x = z / ||z||
         // Means that x will be a unit vector of z
@@ -58,8 +57,8 @@ const CONJUGATE_GRADIENT_ITERATIONS :u32 = 25;
 
 fn conjugate_gradient(A:&SparseMatrix, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
     // Assert A, z and x are the same size
-    // assert!(A.len() == z.len());
-    // assert!(A.len() == x.len());
+    // assert!(A.get_rows() == z.len());
+    // assert!(A.get_columns() == x.len());
     
     /*
     Change this section from alocating inside the function to receive the buffers
@@ -81,10 +80,9 @@ fn conjugate_gradient(A:&SparseMatrix, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
     // Prealocate for q
     let mut q : Vec<f64> = vec![0.0; p.len()];
 
-    for _ in 1..CONJUGATE_GRADIENT_ITERATIONS {
+    for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
         // q = Ap
         A.multiply_by_vector(&p, &mut q);
-        // multiply_matrix_by_vector(&A, &p, &mut q);
         // alpha = rho / (p * q)
         let alpha = rho / multiply_vector_by_column(&p, &q, 1.0);
         // z = z + alpha * p
@@ -193,7 +191,7 @@ fn outer_product(column_vector:&Vec<f64>, row_vector:&Vec<f64>) -> Vec<Vec<f64>>
 // a given condition number, main diagonal shift and total number of non zeros
 
 
-fn makea(n:usize, row_non_zeros:usize, cond_number:f64) -> SparseMatrix {
+fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
     let max_non_zeros:usize = n * (row_non_zeros + 1) * (row_non_zeros + 1);
    
     // Obtain the smallest power of two that is greater or equal n
@@ -208,19 +206,31 @@ fn makea(n:usize, row_non_zeros:usize, cond_number:f64) -> SparseMatrix {
     sparse_matrix_aux.reserve_capacity(max_non_zeros);
     let mut random_index:usize = 0;
     let mut random_value:f64 = 0.0;
+    
+    // In the original Fortran version, it's generated a value first
+    // I could just use the second value of the SEED that is 55909509111989, but 
+    // to be more in line with what is stated in the paper, 
+    // I'm doing this way, the same way is done in Fortran
     let mut random_generator:Random = Random::new(SEED);
+    random_generator.next_f64();
     
     for row in 0..n {
-        for zero_value in 0..row_non_zeros {
+        for _ in 0..row_non_zeros {
             loop {
+                random_value = random_generator.next_f64();
                 random_index = (random_generator.next_f64() * power_of_two as f64) as usize;
+                
+                // Check is inside bounds
+                if random_index >= n {continue;}
+
+                // Check was already generated
                 if sparse_matrix_aux[(row, random_index)] == 0.0 {
                     break;
                 }
             }
-            random_value = random_generator.next_f64();
-            sparse_matrix_aux.set_index_to_value(random_value, row, random_index as usize);
+            sparse_matrix_aux.set_index_to_value(random_value, row, random_index);
         }
+        // Add 1/2 to the diagonal
         sparse_matrix_aux.set_index_to_value(0.5, row, row);
     } 
     if sparse_matrix_aux.get_non_zero_count() > max_non_zeros {
@@ -231,20 +241,21 @@ fn makea(n:usize, row_non_zeros:usize, cond_number:f64) -> SparseMatrix {
     let mut sparse_matrix = SparseMatrix::new(n, n);
 
     // Here the sparse matrix will be constructed
-    let size = 1.0;
+    let mut scale = 1.0;
+    let cond_number = 0.1;
     let ratio = get_ratio(n, cond_number);
 
     for row_number in 0..n {
         let row_as_sparse_vector = sparse_matrix_aux.get_row_as_sparse_vector(row_number);
 
-        let scale  = size - row_number as f64 * ratio;
-
         outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, &mut sparse_matrix, scale);
+
+        scale *= ratio;
     }
 
-    // Traverse the diagonal adding 0.1
+    // Traverse the diagonal adding 0.1 and subtracting the shift (lambda)
     for index in 0..n {
-        sparse_matrix.set_index_to_value(sparse_matrix[(index, index)] + 0.1, index, index);
+        sparse_matrix.set_index_to_value(sparse_matrix[(index, index)] + 0.1 - lambda, index, index);
     }
 
     return sparse_matrix;
@@ -284,6 +295,9 @@ impl SparseMatrix {
         SparseMatrix { values: Vec::new(), rows_pointer: vec![0;rows+1], rows: rows, columns: cols, zero_value: 0.0 } 
     }
     
+    pub fn get_columns(&self) -> usize {self.columns}
+    pub fn get_rows(&self) -> usize {self.rows}
+
     pub fn get_non_zero_count(&self) -> usize {
         self.values.len()
     }
@@ -367,9 +381,9 @@ impl SparseMatrix {
             self.values[row_end] = (value, col);
 
             // Insert sorted in the row
-            for index in (row_start+1..row_end).rev() {
-                if self.values[index].1 < self.values[index+1].1{
-                    self.values.swap(index, index + 1);
+            for index in (row_start+1..(row_end+1)).rev() {
+                if self.values[index].1 < self.values[index-1].1{
+                    self.values.swap(index, index - 1);
                 }
                 else {
                     break;
@@ -377,7 +391,7 @@ impl SparseMatrix {
             }
             
             let rows_pointer_len = self.rows_pointer.len();
-            for index in row_end..rows_pointer_len {
+            for index in (row + 1)..rows_pointer_len {
                 self.rows_pointer[index] += 1;
             }
         }
