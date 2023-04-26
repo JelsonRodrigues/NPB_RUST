@@ -20,18 +20,13 @@ fn main() {
     let iterations = 2;
     let lambda = 10.0;
     let non_zeros = 7;
-
+    let cond_number = 1.5; // ?????
 
     // Create the matix and the vectors
     let mut x:Vec<f64> = vec![1.0; n];
     let mut z:Vec<f64> = vec![0.0; n];
-    let mut A: Vec<Vec<f64>> = create_matrix(n, non_zeros);
+    let mut A = makea(n, non_zeros, cond_number);
     
-    A[0][0] = 2.0;
-    A[0][1] = 3.0;
-    A[1][0] = 1.0;
-    A[1][1] = 4.0;
-
     // Main loop
     for i in 0..iterations {
         // solve Az = x 
@@ -61,10 +56,10 @@ fn create_matrix(order:usize, non_zeros:usize) -> Vec<Vec<f64>> {
 
 const CONJUGATE_GRADIENT_ITERATIONS :u32 = 25;
 
-fn conjugate_gradient(A:&Vec<Vec<f64>>, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
+fn conjugate_gradient(A:&SparseMatrix, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
     // Assert A, z and x are the same size
-    assert!(A.len() == z.len());
-    assert!(A.len() == x.len());
+    // assert!(A.len() == z.len());
+    // assert!(A.len() == x.len());
     
     /*
     Change this section from alocating inside the function to receive the buffers
@@ -76,15 +71,9 @@ fn conjugate_gradient(A:&Vec<Vec<f64>>, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
     z.fill(0.0);
 
     // Initialize r to x
-    // let mut r:Vec<f64> = Vec::with_capacity(x.len());
-    // r = x.clone();
     let mut r = x.to_vec();
 
     let mut rho = multiply_vector_by_column(&r, &r, 1.0);
-
-    // let mut p:Vec<f64> = Vec::with_capacity(r.len());
-    // // p.clone_from(&r);
-    // p = r.clone();
 
     let mut p  = r.to_vec();
 
@@ -94,7 +83,8 @@ fn conjugate_gradient(A:&Vec<Vec<f64>>, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
 
     for _ in 1..CONJUGATE_GRADIENT_ITERATIONS {
         // q = Ap
-        multiply_matrix_by_vector(&A, &p, &mut q);
+        A.multiply_by_vector(&p, &mut q);
+        // multiply_matrix_by_vector(&A, &p, &mut q);
         // alpha = rho / (p * q)
         let alpha = rho / multiply_vector_by_column(&p, &q, 1.0);
         // z = z + alpha * p
@@ -115,7 +105,8 @@ fn conjugate_gradient(A:&Vec<Vec<f64>>, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
     // The operation I'm performing here is r = || x - Az ||
     // Here i'm using the r vector as a temp to the result of Az
     // r = A * z
-    multiply_matrix_by_vector(&A, &z, &mut r);
+    // multiply_matrix_by_vector(&A, &z, &mut r);
+    A.multiply_by_vector(&z, &mut r);
     // r = x - r
     add_multiply_self(&mut r, x, -1.0);
 
@@ -179,11 +170,30 @@ fn get_ratio(n:usize, cond:f64) -> f64 {
     return cond.powf(1.0 / n as f64);
 }
 
+
+// This function calculates the outer product between two vector, 
+// The first must be a column vector and the second a row vector
+// The result is a matrix with the same number of rows as the column vector 
+// and the same number of columns as the row vector
+fn outer_product(column_vector:&Vec<f64>, row_vector:&Vec<f64>) -> Vec<Vec<f64>> {
+    let mut result_matrix : Vec<Vec<f64>> = Vec::with_capacity(column_vector.len());
+
+    for row in column_vector {
+        let mut new_row:Vec<f64> = Vec::with_capacity(row_vector.len());
+        for column in row_vector {
+            new_row.push(row * column);
+        }
+        result_matrix.push(new_row);
+    }
+
+    return result_matrix;
+}
+
 // Generate a sparse matrix represented as CSM with
 // a given condition number, main diagonal shift and total number of non zeros
 
 
-fn makea(n:usize, row_non_zeros:usize, cond_number:f64, shift:f64) -> SparseMatrix {
+fn makea(n:usize, row_non_zeros:usize, cond_number:f64) -> SparseMatrix {
     let max_non_zeros:usize = n * (row_non_zeros + 1) * (row_non_zeros + 1);
    
     // Obtain the smallest power of two that is greater or equal n
@@ -221,26 +231,33 @@ fn makea(n:usize, row_non_zeros:usize, cond_number:f64, shift:f64) -> SparseMatr
     let mut sparse_matrix = SparseMatrix::new(n, n);
 
     // Here the sparse matrix will be constructed
-    let mut size = 1.0;
+    let size = 1.0;
     let ratio = get_ratio(n, cond_number);
 
     for row_number in 0..n {
         let row_as_sparse_vector = sparse_matrix_aux.get_row_as_sparse_vector(row_number);
 
-        for (value, col) in row_as_sparse_vector {
-            let scale = size * value;
+        let scale  = size - row_number as f64 * ratio;
 
-            for (value_2, col_2) in row_as_sparse_vector {
-                let va = value_2 * scale;
-                sparse_matrix.set_index_to_value(sparse_matrix[()], row, col)
-            }
-        }
+        outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, &mut sparse_matrix, scale);
     }
 
+    // Traverse the diagonal adding 0.1
+    for index in 0..n {
+        sparse_matrix.set_index_to_value(sparse_matrix[(index, index)] + 0.1, index, index);
+    }
 
     return sparse_matrix;
 }
 
+
+fn outer_product_sum_on_sparse_matrix(column_vector : &[(f64, usize)], row_vector : &[(f64, usize)], sparse_matrix : &mut SparseMatrix, scale:f64) {
+    for (row, index_row) in column_vector {
+        for (col, index_col) in row_vector {
+            sparse_matrix.set_index_to_value(sparse_matrix[(*index_row, *index_col)] + row * col * scale, *index_row, *index_col);
+        }
+    }
+}
 
 
 // A sparse matrix CSR compressed
@@ -284,7 +301,6 @@ impl SparseMatrix {
             result[index] = sum;
         }
     }
-
 
     pub fn get_row_as_sparse_vector(&self, row : usize) -> &[(f64, usize)] {
         return &self.values[self.rows_pointer[row]..self.rows_pointer[row+1]];
