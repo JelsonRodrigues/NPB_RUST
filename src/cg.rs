@@ -1,8 +1,7 @@
 mod commom;
 
-use commom::random::{Random, get_nth_seed_value};
+use commom::random::Random;
 use commom::classes::Class;
-use commom::benchmarks::Benchmark;
 use std::borrow::Borrow;
 use std::ops::Index;
 use std::time::Instant;
@@ -24,42 +23,56 @@ fn main() {
     // Create the matix and the vectors
     let mut x:Vec<f64> = vec![1.0; n];
     let mut z:Vec<f64> = vec![0.0; n];
-    let mut A = makea(n, non_zeros, lambda);
+    let A = makea(n, non_zeros, lambda);
+
+    let sum = A.values.iter().fold(0.0, |acumulated, item| acumulated + item.0);
+    println!("Sum of nonzeros {sum}");
     
+
+    // Prealocate here the vectors that are used inside conjugate gradient function to save allocation time
+    let mut r:Vec<f64> = vec![0.0; n];
+    let mut p:Vec<f64> = vec![0.0; n];
+    let mut q:Vec<f64> = vec![0.0; n];
+
+    // Start timing
+    let before = Instant::now();
+    let mut zeta = 0.0;
     // Main loop
     for i in 0..iterations {
         // solve Az = x 
-        let r = conjugate_gradient(&A, &mut z, &x);
+        let r = conjugate_gradient(&A, &mut z, &x, &mut r, &mut p, &mut q);
 
-        // zeta = lambda - 1 / (x * z)
-        let zeta = lambda - 1.0 / multiply_vector_by_column(&x, &z, 1.0);
+        // zeta = lambda + 1 / (x * z)
+        zeta = lambda + 1.0 / multiply_vector_by_column(&x, &z, 1.0);
 
         // Print it, zeta, r
-        println!("Iteration = {}, ||r|| = {r}, zeta = {zeta}", i+1);
+        println!("Iteration = {:02}, ||r|| = {r:e}, zeta = {zeta:e}", i+1);
 
         // x = z / ||z||
         // Means that x will be a unit vector of z
-        multiply_add_self(&mut x, &z, 1.0 /  magnitude(&z));
+        replace_self(&mut x, &z, 1.0 / magnitude(&z));
     }
-}
+    let now = Instant::now();
+    show_time((now - before).borrow());
 
-fn create_matrix(order:usize, non_zeros:usize) -> Vec<Vec<f64>> {
-    let mut matrix :Vec<Vec<f64>> = Vec::with_capacity(order);
-    
-    for _ in 0..order {
-        matrix.push(vec![0.0; order]);
+    // Verification part
+    let zeta_reference = 8.5971775078648;   // Value for S class
+    let epsilon = 1.0e-10;
+    let error = (zeta - zeta_reference).abs();
+    if  error <= epsilon {
+        println!("Verification SUCESSFULL");
+    }
+    else {
+        println!("Verification FAILED");
     }
 
-    return matrix;
+    println!("zeta {zeta}");
+    println!("error {error}");
 }
 
 const CONJUGATE_GRADIENT_ITERATIONS :u32 = 25;
 
-fn conjugate_gradient(A:&SparseMatrix, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
-    // Assert A, z and x are the same size
-    // assert!(A.get_rows() == z.len());
-    // assert!(A.get_columns() == x.len());
-    
+fn conjugate_gradient(A:&SparseMatrix, z:&mut Vec<f64>, x:&Vec<f64>, r:&mut Vec<f64>, p:&mut Vec<f64>, q:&mut Vec<f64>) -> f64 {
     /*
     Change this section from alocating inside the function to receive the buffers
     The allocation and releasing of these buffers can get quite expensive, because 
@@ -69,34 +82,36 @@ fn conjugate_gradient(A:&SparseMatrix, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
     // Initialize z to 0
     z.fill(0.0);
 
+    *r = x.to_vec();
+    *p = x.to_vec();
+
     // Initialize r to x
-    let mut r = x.to_vec();
+    // let mut r = x.to_vec();
 
     let mut rho = multiply_vector_by_column(&r, &r, 1.0);
 
-    let mut p  = r.to_vec();
-
+    // let mut p  = r.to_vec();
 
     // Prealocate for q
-    let mut q : Vec<f64> = vec![0.0; p.len()];
+    // let mut q : Vec<f64> = vec![0.0; p.len()];
 
     for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
         // q = Ap
-        A.multiply_by_vector(&p, &mut q);
+        A.multiply_by_vector(&p, q);
         // alpha = rho / (p * q)
         let alpha = rho / multiply_vector_by_column(&p, &q, 1.0);
         // z = z + alpha * p
-        multiply_add_self(z, &q, alpha);
+        multiply_add_self(z, &p, alpha);
         // rho_0 = rho
         let rho_0 = rho;
         // r = r - alpha * q 
-        multiply_add_self(&mut r, &q, -alpha);
+        multiply_add_self(r, &q, -alpha);
         // rho = r * r
         rho = multiply_vector_by_column(&r, &r, 1.0);
         // beta = rho / rho_0
         let beta = rho / rho_0;
         // p = r + beta * p
-        add_multiply_self(&mut p, &r, beta);
+        add_multiply_self(p, &r, beta);
     }
 
 
@@ -104,9 +119,9 @@ fn conjugate_gradient(A:&SparseMatrix, z:&mut Vec<f64>, x:&Vec<f64>) -> f64 {
     // Here i'm using the r vector as a temp to the result of Az
     // r = A * z
     // multiply_matrix_by_vector(&A, &z, &mut r);
-    A.multiply_by_vector(&z, &mut r);
+    A.multiply_by_vector(&z, r);
     // r = x - r
-    add_multiply_self(&mut r, x, -1.0);
+    add_multiply_self(r, x, -1.0);
 
     return magnitude(&r);
 }
@@ -124,24 +139,19 @@ fn multiply_vector_by_column(a: &Vec<f64>, b:&Vec<f64>, scalar: f64) -> f64{
     return  result;
 }
 
-// Calculate result = matrix * vector
-fn multiply_matrix_by_vector(matrix:&Vec<Vec<f64>>, vector:&Vec<f64>, result:&mut Vec<f64>) {
-    assert_eq!(matrix[0].len(), vector.len());
-    assert_eq!(matrix.len(), result.len());
-
-    let vec_size = result.len();
-    for i in 0..vec_size {
-        result[i] = multiply_vector_by_column(&matrix[i], vector, 1.0);
-    }
-}
-
 // Compute vector_a = vector_a + vector_b * scalar
-fn multiply_add_self(vector_a: &mut Vec<f64>, vector_b:&Vec<f64>, scalar:f64) {
+fn multiply_add_self(vector_a:&mut Vec<f64>, vector_b:&Vec<f64>, scalar:f64) {
     assert_eq!(vector_a.len(), vector_b.len());
 
     let len = vector_a.len();
     for i in 0..len {
         vector_a[i] = vector_a[i] + vector_b[i] * scalar;
+    }
+}
+
+fn replace_self(vector_a: &mut Vec<f64>, vector_b:&Vec<f64>, scale:f64) {
+    for (index, item) in vector_a.iter_mut().enumerate().take(vector_b.len()){
+        *item = vector_b[index] * scale;
     }
 }
 
@@ -168,35 +178,13 @@ fn get_ratio(n:usize, cond:f64) -> f64 {
     return cond.powf(1.0 / n as f64);
 }
 
-
-// This function calculates the outer product between two vector, 
-// The first must be a column vector and the second a row vector
-// The result is a matrix with the same number of rows as the column vector 
-// and the same number of columns as the row vector
-fn outer_product(column_vector:&Vec<f64>, row_vector:&Vec<f64>) -> Vec<Vec<f64>> {
-    let mut result_matrix : Vec<Vec<f64>> = Vec::with_capacity(column_vector.len());
-
-    for row in column_vector {
-        let mut new_row:Vec<f64> = Vec::with_capacity(row_vector.len());
-        for column in row_vector {
-            new_row.push(row * column);
-        }
-        result_matrix.push(new_row);
-    }
-
-    return result_matrix;
-}
-
 // Generate a sparse matrix represented as CSM with
 // a given condition number, main diagonal shift and total number of non zeros
-
-
 fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
     let max_non_zeros:usize = n * (row_non_zeros + 1) * (row_non_zeros + 1);
-   
-    // Obtain the smallest power of two that is greater or equal n
     
-    let power_of_two:usize =  n.next_power_of_two();
+    // Obtain the smallest power of two that is greater or equal n
+    let power_of_two:usize = n.next_power_of_two();
 
     // generate the values and its positions in the sparse matrix, line by line
     // and add them to the auxiliar matrix. This auxiliar matrix will be basically
@@ -204,8 +192,8 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
 
     let mut sparse_matrix_aux = SparseMatrix::new(n, n);
     sparse_matrix_aux.reserve_capacity(max_non_zeros);
-    let mut random_index:usize = 0;
-    let mut random_value:f64 = 0.0;
+    let mut random_index:usize;
+    let mut random_value:f64;
     
     // In the original Fortran version, it's generated a value first
     // I could just use the second value of the SEED that is 55909509111989, but 
@@ -237,10 +225,9 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
         panic!("Number of non-zeros generated for the matrix exceeded the maximum defined.\n
         Non-zero count: {}, maximum non-zeros: {}", sparse_matrix_aux.get_non_zero_count(), max_non_zeros);
     }
-
-    let mut sparse_matrix = SparseMatrix::new(n, n);
-
+    
     // Here the sparse matrix will be constructed
+    let mut sparse_matrix = SparseMatrix::new(n, n);
     let mut scale = 1.0;
     let cond_number = 0.1;
     let ratio = get_ratio(n, cond_number);
@@ -260,7 +247,6 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
 
     return sparse_matrix;
 }
-
 
 fn outer_product_sum_on_sparse_matrix(column_vector : &[(f64, usize)], row_vector : &[(f64, usize)], sparse_matrix : &mut SparseMatrix, scale:f64) {
     for (row, index_row) in column_vector {
@@ -303,7 +289,7 @@ impl SparseMatrix {
     }
 
     pub fn multiply_by_vector(&self, vector:&Vec<f64>, result:&mut Vec<f64>) {
-        for index in 0..self.rows {
+        for (index, item) in result.iter_mut().enumerate().take(self.rows) {
             let row_start = self.rows_pointer[index];
             let row_end = self.rows_pointer[index + 1];
 
@@ -312,7 +298,7 @@ impl SparseMatrix {
                 let (value, col) = self.values[index_inside_values];
                 sum += value * vector[col];
             }
-            result[index] = sum;
+            *item = sum;
         }
     }
 
