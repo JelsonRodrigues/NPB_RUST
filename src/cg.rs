@@ -28,7 +28,6 @@ fn main() {
     let sum = A.values.iter().fold(0.0, |acumulated, item| acumulated + item.0);
     println!("Sum of nonzeros {sum}");
     
-
     // Prealocate here the vectors that are used inside conjugate gradient function to save allocation time
     let mut r:Vec<f64> = vec![0.0; n];
     let mut p:Vec<f64> = vec![0.0; n];
@@ -41,6 +40,7 @@ fn main() {
     for i in 0..iterations {
         // solve Az = x 
         let r = conjugate_gradient(&A, &mut z, &x, &mut r, &mut p, &mut q);
+        // let r = conjugate_gradient_parallel(&A, &mut z, &x, &mut r, &mut p, &mut q);
 
         // zeta = lambda + 1 / (x * z)
         zeta = lambda + 1.0 / multiply_vector_by_column(&x, &z, 1.0);
@@ -72,58 +72,141 @@ fn main() {
 
 const CONJUGATE_GRADIENT_ITERATIONS :u32 = 25;
 
-fn conjugate_gradient(A:&SparseMatrix, z:&mut Vec<f64>, x:&Vec<f64>, r:&mut Vec<f64>, p:&mut Vec<f64>, q:&mut Vec<f64>) -> f64 {
-    /*
-    Change this section from alocating inside the function to receive the buffers
-    The allocation and releasing of these buffers can get quite expensive, because 
-    the size is huge 1400 <= x <= 9000000
-    */
-
-    // Initialize z to 0
+fn conjugate_gradient(
+    A:&SparseMatrix,
+    z:&mut Vec<f64>, 
+    x:&Vec<f64>, 
+    r:&mut Vec<f64>, 
+    p:&mut Vec<f64>, 
+    q:&mut Vec<f64>
+) -> f64 
+{
+    // Set z to 0.0
     z.fill(0.0);
 
+    // Set r and p vectors to x
     *r = x.to_vec();
     *p = x.to_vec();
 
-    // Initialize r to x
-    // let mut r = x.to_vec();
-
+    // Calculate rho r * r
     let mut rho = multiply_vector_by_column(&r, &r, 1.0);
-
-    // let mut p  = r.to_vec();
-
-    // Prealocate for q
-    // let mut q : Vec<f64> = vec![0.0; p.len()];
 
     for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
         // q = Ap
         A.multiply_by_vector(&p, q);
+
         // alpha = rho / (p * q)
         let alpha = rho / multiply_vector_by_column(&p, &q, 1.0);
+
         // z = z + alpha * p
         multiply_add_self(z, &p, alpha);
+
         // rho_0 = rho
         let rho_0 = rho;
+
         // r = r - alpha * q 
         multiply_add_self(r, &q, -alpha);
+
         // rho = r * r
         rho = multiply_vector_by_column(&r, &r, 1.0);
+
         // beta = rho / rho_0
         let beta = rho / rho_0;
+        
         // p = r + beta * p
         add_multiply_self(p, &r, beta);
     }
 
-
     // The operation I'm performing here is r = || x - Az ||
     // Here i'm using the r vector as a temp to the result of Az
     // r = A * z
-    // multiply_matrix_by_vector(&A, &z, &mut r);
     A.multiply_by_vector(&z, r);
+
     // r = x - r
     add_multiply_self(r, x, -1.0);
 
+    // return the magnitude
     return magnitude(&r);
+}
+
+fn conjugate_gradient_parallel(
+    A:&SparseMatrix, 
+    z:&mut Vec<f64>, 
+    x:&Vec<f64>, 
+    r:&mut Vec<f64>, 
+    p:&mut Vec<f64>, 
+    q:&mut Vec<f64>
+) -> f64  
+{
+    /* Parallel Section */
+    let mut rho = 0.0;
+    
+    for i in 0..x.len() {
+        z[i] = 0.0;
+        r[i] = x[i];
+        p[i] = x[i];
+        rho += x[i] * x[i];
+    }
+
+    /* End Parallel Section */
+
+    for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
+        /* Paralel section */
+        let mut p_inner_product_q = 0.0;
+        for i in 0..A.rows {
+            let start_row = A.rows_pointer[i];
+            let end_row = A.rows_pointer[i+1];
+
+            let mut sum = 0.0;
+            for (value, col) in &A.values[start_row..end_row] {
+                sum += value * p[*col];
+            }
+            q[i] = sum;
+            p_inner_product_q += q[i] * p[i];
+        }
+        /* END Parallel Section */
+        
+        let alpha = rho / p_inner_product_q;
+
+        /* Paralell Section */
+        let rho_0 = rho;
+        rho = 0.0;
+        for i in 0..x.len() {
+            z[i] += alpha * p[i];
+            r[i] += -alpha * q[i];
+            rho += r[i] * r[i];
+        }
+        /* END Parallel Section */
+
+        // beta = rho / rho_0
+        let beta = rho / rho_0;
+
+        /* Parallel Section */
+        // p = r + beta * p
+        for i in 0..x.len() {
+            p[i] = r[i] + beta * p[i];
+        }
+        /* END Parallel Section */
+    }
+
+
+    /* Paralell Section */
+
+    let mut mag = 0.0;
+    for i in 0..A.rows {
+        let start_row = A.rows_pointer[i];
+        let end_row = A.rows_pointer[i+1];
+
+        let mut sum = 0.0;
+        for (value, col) in &A.values[start_row..end_row] {
+            sum += value * z[*col];
+        }
+        mag += (x[i] - sum).powi(2);
+    }
+
+    return mag;
+
+    /* END Parallel Section */
 }
 
 // Return the multiplication of a * (b*scalar)
