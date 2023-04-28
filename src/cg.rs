@@ -8,17 +8,29 @@ use std::time::Instant;
 use std::vec;
 use std::{thread::{available_parallelism, JoinHandle}};
 use commom::timer::show_time;
-
+use scoped_pool::Pool;
 
 // Value from the nasa paper
 const SEED: u64 = 314_159_265;
 
 fn main() {
     // Values for the S class
-    let n:usize = 1400;
+    // let n:usize = 1400;
+    // let iterations = 15;
+    // let lambda = 10.0;
+    // let non_zeros = 7;
+
+    // Values for A class
+    let n:usize = 14000;
     let iterations = 15;
-    let lambda = 10.0;
-    let non_zeros = 7;
+    let lambda = 20.0;
+    let non_zeros = 11;
+
+    // // Values for B class
+    // let n:usize = 75000;
+    // let iterations = 75;
+    // let lambda = 60.0;
+    // let non_zeros = 13;
 
     // Create the matix and the vectors
     let mut x:Vec<f64> = vec![1.0; n];
@@ -33,14 +45,16 @@ fn main() {
     let mut p:Vec<f64> = vec![0.0; n];
     let mut q:Vec<f64> = vec![0.0; n];
 
+    let pool = Pool::new(12);
+
     // Start timing
     let before = Instant::now();
     let mut zeta = 0.0;
     // Main loop
     for i in 0..iterations {
         // solve Az = x 
-        let r = conjugate_gradient(&A, &mut z, &x, &mut r, &mut p, &mut q);
-        // let r = conjugate_gradient_parallel(&A, &mut z, &x, &mut r, &mut p, &mut q);
+        // let r = conjugate_gradient(&A, &mut z, &x, &mut r, &mut p, &mut q);
+        let r = conjugate_gradient_parallel(&A, &mut z, &x, &mut r, &mut p, &mut q, &pool);
 
         // zeta = lambda + 1 / (x * z)
         zeta = lambda + 1.0 / multiply_vector_by_column(&x, &z, 1.0);
@@ -56,7 +70,9 @@ fn main() {
     show_time((now - before).borrow());
 
     // Verification part
-    let zeta_reference = 8.5971775078648;   // Value for S class
+    // let zeta_reference = 8.5971775078648;   // Value for S class
+    let zeta_reference = 17.130235054029;    // Value for A class
+    // let zeta_reference = 22.712745482631;   // Values for B class
     let epsilon = 1.0e-10;
     let error = (zeta - zeta_reference).abs();
     if  error <= epsilon {
@@ -129,22 +145,42 @@ fn conjugate_gradient(
     return magnitude(&r);
 }
 
+use itertools::izip;
+const CHUNK_SIZE:usize = 128;
 fn conjugate_gradient_parallel(
     A:&SparseMatrix, 
     z:&mut Vec<f64>, 
     x:&Vec<f64>, 
     r:&mut Vec<f64>, 
     p:&mut Vec<f64>, 
-    q:&mut Vec<f64>
+    q:&mut Vec<f64>,
+    pool: &Pool,
 ) -> f64  
 {
     /* Parallel Section */
     let mut rho = 0.0;
     
+    let x_chunks = x.chunks(CHUNK_SIZE);
+    let r_chunks = r.chunks_mut(CHUNK_SIZE);
+    let z_chunks = z.chunks_mut(CHUNK_SIZE);
+    let p_chunks = p.chunks_mut(CHUNK_SIZE);
+
+    pool.scoped( move |scope| {
+        for (x_chunk, z_chunk, r_chunk, p_chunk) in izip!(x_chunks, z_chunks, r_chunks, p_chunks) {
+            scope.execute( move || {  
+                for (x, z, r, p) in izip!(x_chunk, z_chunk, r_chunk, p_chunk){
+                    *z = 0.0;
+                    *r = *x;
+                    *p = *x;
+                }
+            });
+        }
+    });
+
     for i in 0..x.len() {
-        z[i] = 0.0;
-        r[i] = x[i];
-        p[i] = x[i];
+    //     z[i] = 0.0;
+    //     r[i] = x[i];
+    //     p[i] = x[i];
         rho += x[i] * x[i];
     }
 
@@ -168,12 +204,29 @@ fn conjugate_gradient_parallel(
         
         let alpha = rho / p_inner_product_q;
 
+        
+        let z_chunks = z.chunks_mut(CHUNK_SIZE);
+        let r_chunks = r.chunks_mut(CHUNK_SIZE);
+        let p_chunks = p.chunks_mut(CHUNK_SIZE);
+        let q_chunks = q.chunks_mut(CHUNK_SIZE);
+
+        pool.scoped( move |scope| {
+            for (z_chunk, r_chunk, p_chunk, q_chunk) in izip!(z_chunks, r_chunks, p_chunks, q_chunks) {
+                scope.execute( move || {  
+                    for (z, r, p, q) in izip!(z_chunk, r_chunk, p_chunk, q_chunk){
+                        *z += alpha * (*p);
+                        *r += -alpha * (*q);
+                    }
+                });
+            }
+        });
+
         /* Paralell Section */
         let rho_0 = rho;
         rho = 0.0;
         for i in 0..x.len() {
-            z[i] += alpha * p[i];
-            r[i] += -alpha * q[i];
+            // z[i] += alpha * p[i];
+            // r[i] += -alpha * q[i];
             rho += r[i] * r[i];
         }
         /* END Parallel Section */
@@ -181,11 +234,24 @@ fn conjugate_gradient_parallel(
         // beta = rho / rho_0
         let beta = rho / rho_0;
 
+        let r_chunks = r.chunks(CHUNK_SIZE);
+        let p_chunks = p.chunks_mut(CHUNK_SIZE);
+
+        pool.scoped( move |scope| {
+            for (r_chunk, p_chunk) in izip!(r_chunks, p_chunks) {
+                scope.execute( move || {  
+                    for (r, p) in izip!(r_chunk, p_chunk){
+                        *p = *r + beta * *p;
+                    }
+                });
+            }
+        });
+
         /* Parallel Section */
         // p = r + beta * p
-        for i in 0..x.len() {
-            p[i] = r[i] + beta * p[i];
-        }
+        // for i in 0..x.len() {
+        //     p[i] = r[i] + beta * p[i];
+        // }
         /* END Parallel Section */
     }
 
