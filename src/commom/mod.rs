@@ -23,10 +23,13 @@ pub mod benchmarks {
     #[derive(Debug, Clone, Copy)]
     pub enum Benchmark {
         EP(Class),
+        CG(Class),
     }
 
+    //todo: refactor the get_difficulty functions
+
     impl Benchmark {
-        pub fn get_difficulty(&self) -> u64 {
+        pub fn ep_get_difficulty(&self) -> u64 {
             match self {
                 Benchmark::EP(class) => {
                     match class {
@@ -40,8 +43,28 @@ pub mod benchmarks {
                         Class::F => return 1 << 44,    // 2 ^ 44
                     }
                 },
+                Benchmark::CG(class) => todo!(),
             }
         }
+
+        pub fn cg_get_difficulty(&self) -> (usize, usize, f64, usize) {
+            match self {
+                Benchmark::CG(class) => {
+                    match class {
+                        Class::S => return (1400, 15, 10.0, 7),
+                        Class::W => return (7000, 15, 12.0, 8),
+                        Class::A => return (14000, 15, 20.0, 11),  
+                        Class::B => return (75000, 75, 60.0, 13),  
+                        Class::C => return (150000, 75, 110.0, 15),  
+                        Class::D => return (1500000, 100, 500.0, 21),  
+                        Class::E => return (9000000, 100, 1500.0, 26),  
+                        Class::F => return (54000000, 100, 5000.0, 31),
+                    }
+                },
+                Benchmark::EP(class) => todo!(),
+            }
+        }
+        
 
         pub fn ep_verify(&self, sum_x: f64, sum_y: f64, gaussian_count: u64) -> bool {
             let mut verified = true;
@@ -95,6 +118,8 @@ pub mod benchmarks {
                         },
                     }
                 },
+                Benchmark::CG(_) => todo!(),
+                
                 // _ => verified = false,
             }     
 
