@@ -3,6 +3,7 @@ mod commom;
 use commom::random::Random;
 use commom::classes::Class;
 use std::borrow::Borrow;
+use std::cmp::Ordering;
 use std::ops::Index;
 use std::time::Instant;
 use std::vec;
@@ -378,27 +379,32 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
     let mut scale = 1.0;
     let cond_number = 0.1;
     let ratio = get_ratio(n, cond_number);
-
+    
+    // sparse_matrix.initialize_to_zero((row_non_zeros + 1) * (row_non_zeros + 1));
     for row_number in 0..n {
         let row_as_sparse_vector = sparse_matrix_aux.get_row_as_sparse_vector(row_number);
 
         outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, &mut sparse_matrix, scale);
+        // sparse_matrix.outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, scale);
 
         scale *= ratio;
     }
+    // sparse_matrix.desfragmentate();
 
     // Traverse the diagonal adding 0.1 and subtracting the shift (lambda)
     for index in 0..n {
-        sparse_matrix.set_index_to_value(sparse_matrix[(index, index)] + 0.1 - lambda, index, index);
+        // sparse_matrix.set_index_to_value(sparse_matrix[(index, index)] + 0.1 - lambda, index, index);
+        sparse_matrix.add_index_with_value_optimized(0.1 - lambda, index, index);
     }
 
     return sparse_matrix;
 }
 
 fn outer_product_sum_on_sparse_matrix(column_vector : &[(f64, usize)], row_vector : &[(f64, usize)], sparse_matrix : &mut SparseMatrix, scale:f64) {
-    for (row, index_row) in column_vector {
-        for (col, index_col) in row_vector {
-            sparse_matrix.set_index_to_value(sparse_matrix[(*index_row, *index_col)] + row * col * scale, *index_row, *index_col);
+    for (row_value, index_row) in column_vector {
+        for (col_value, index_col) in row_vector {
+            // sparse_matrix.set_index_to_value(sparse_matrix[(*index_row, *index_col)] + row * col * scale, *index_row, *index_col);
+            sparse_matrix.add_index_with_value(row_value * col_value * scale, *index_row, *index_col);
         }
     }
 }
@@ -482,6 +488,85 @@ impl SparseMatrix {
         self.values.reserve(size);
     }
 
+    /* Otimization functions */
+    /*
+    The order to call is
+    let mut a = SparseMatrix::new();
+    a.reserve_capacity(value);
+    a.initialize_to_zero(max_row);
+    a.add_position();
+    a.desfragmentate();
+     */
+
+    pub fn initialize_to_zero(&mut self, max_non_zeros_per_row:usize) {
+        self.values = vec![(0.0, 0); self.values.capacity()];
+
+        let mut value = 0;
+        for i in &mut self.rows_pointer {
+            *i = value;
+            value += max_non_zeros_per_row;
+        }
+    }
+
+    pub fn desfragmentate(&mut self) {
+        let mut index_swap = 0;
+
+        for ind_row in 0..self.rows_pointer.len()-1 {
+            let row_start = self.rows_pointer[ind_row];
+            let row_end = self.rows_pointer[ind_row+1];
+
+            let new_row_start = index_swap;
+
+            for ind in row_start..row_end {
+                if self.values[ind].0 != 0.0 {
+                    self.values.swap(ind, index_swap);
+                    index_swap+=1;
+                }
+            }
+
+            self.rows_pointer[ind_row] = new_row_start;
+        }
+
+        let last_index = self.rows_pointer.len()-1;
+        self.rows_pointer[last_index] = index_swap;
+    }
+
+    pub fn add_index_with_value_optimized(&mut self, value:f64, row:usize, col:usize) {
+        if self.rows <= row || self.columns <= col {
+            panic!("Index [{row}][{col}] out of bounds!!!");
+        }
+
+        let row_start = self.rows_pointer[row];
+        let row_end = self.rows_pointer[row + 1];
+
+        let result_search = &self.values[row_start..row_end]
+            .binary_search_by(|tuple_value| {
+                if tuple_value.0 == 0.0 {Ordering::Greater}
+                else {tuple_value.1.cmp(&col)}
+            });
+
+        match result_search {
+            Ok(index_found) => {
+                self.values[row_start + index_found].0 += value;
+            },
+            Err(index_to_insert) => {
+                if self.values[row_start + index_to_insert].0 != 0.0 && row_start + index_to_insert <= row_end  {
+                    self.values[row_start + index_to_insert..row_end].rotate_right(1);
+                }
+                self.values[row_start + index_to_insert] = (value, col);
+            },
+        }
+    }
+
+    fn outer_product_sum_on_sparse_matrix(&mut self, column_vector : &[(f64, usize)], row_vector : &[(f64, usize)], scale:f64) {
+        for (row_value, index_row) in column_vector {
+            for (col_value, index_col) in row_vector {
+                self.add_index_with_value_optimized(row_value * col_value * scale, *index_row, *index_col);
+            }
+        }
+    }
+    /* End of otimization functions */
+
     pub fn set_index_to_value(&mut self, value:f64, row:usize, col:usize) {
         // Check if the index is already a non-zero value,
         // if it is, then change the value
@@ -493,43 +578,47 @@ impl SparseMatrix {
         let row_start = self.rows_pointer[row];
         let row_end = self.rows_pointer[row + 1];
 
-
-        /* Aqui eu devo utilizar uma busca binaria para acelerar */
-        // Seach for the column in the row
-        let mut index = 0;
-        let mut found = false;
-        for i in row_start..row_end {
-            if self.values[i].1 == col {
-                index = i;
-                found = true;
-            }
-        }
+        let result_search = &self.values[row_start..row_end].binary_search_by(|value| value.1.cmp(&col));
         
-        if found {
-            self.values[index] = (value, col);
-        }
-        else {
-            self.values.push((0.0, 0));
-            self.values[row_end..].rotate_right(1);
-            
-            // Insert in last position of the row
-            self.values[row_end] = (value, col);
+        match result_search {
+            Ok(index_found) => {
+                self.values[row_start + index_found] = (value, col);
+            },
+            Err(index_to_insert) => {
+                self.values.insert(row_start + index_to_insert, (value, col));
 
-            // Insert sorted in the row
-            for index in (row_start+1..(row_end+1)).rev() {
-                if self.values[index].1 < self.values[index-1].1{
-                    self.values.swap(index, index - 1);
+                /* Aqui eu nao posso atualizar tudo ate o final, utilizar alguma forma de verificacao */
+                let rows_pointer_len = self.rows_pointer.len();
+                for index in (row + 1)..rows_pointer_len {
+                    self.rows_pointer[index] += 1;
                 }
-                else {
-                    break;
+            },
+        }
+    }
+
+    pub fn add_index_with_value(&mut self, value:f64, row:usize, col:usize) {
+        if self.rows <= row || self.columns <= col {
+            panic!("Index [{row}][{col}] out of bounds!!!");
+        }
+
+        let row_start = self.rows_pointer[row];
+        let row_end = self.rows_pointer[row + 1];
+
+        let result_search = &self.values[row_start..row_end].binary_search_by(|value| value.1.cmp(&col));
+
+        match result_search {
+            Ok(index_found) => {
+                self.values[row_start + index_found].0 += value;
+            },
+            Err(index_to_insert) => {
+                self.values.insert(row_start + index_to_insert, (value, col));
+
+                /* Aqui eu nao posso atualizar tudo ate o final, utilizar alguma forma de verificacao */
+                let rows_pointer_len = self.rows_pointer.len();
+                for index in (row + 1)..rows_pointer_len {
+                    self.rows_pointer[index] += 1;
                 }
-            }
-            
-            /* Aqui eu nao posso atualizar tudo ate o final, utilizar alguma forma de verificacao */
-            let rows_pointer_len = self.rows_pointer.len();
-            for index in (row + 1)..rows_pointer_len {
-                self.rows_pointer[index] += 1;
-            }
+            },
         }
     }
 }
