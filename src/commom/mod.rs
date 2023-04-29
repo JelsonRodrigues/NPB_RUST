@@ -65,6 +65,23 @@ pub mod benchmarks {
             }
         }
         
+        pub fn cg_verify(&self, zeta:f64) -> bool {
+            let epsilon = 1.0e-10;
+            if let Benchmark::CG(class) = self {
+                match class {
+                    Class::S => return (8.5971775078648 - zeta).abs() <= epsilon,
+                    Class::W => return (10.362595087124 - zeta).abs() <= epsilon,
+                    Class::A => return (17.130235054029 - zeta).abs() <= epsilon,
+                    Class::B => return (22.712745482631 - zeta).abs() <= epsilon,
+                    Class::C => return (28.973605592845 - zeta).abs() <= epsilon,
+                    Class::D => return (52.514532105794 - zeta).abs() <= epsilon,
+                    Class::E => return (77.522164599383 - zeta).abs() <= epsilon,
+                    Class::F => return (107.30708264330 - zeta).abs() <= epsilon,
+                }
+            }
+
+            return false;
+        }
 
         pub fn ep_verify(&self, sum_x: f64, sum_y: f64, gaussian_count: u64) -> bool {
             let mut verified = true;
