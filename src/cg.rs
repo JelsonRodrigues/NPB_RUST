@@ -18,7 +18,7 @@ const SEED: u64 = 314_159_265;
 fn main() {
     // Setup benchmark values
     // todo!("Read class from arguments");
-    let class = Class::A;
+    let class = Class::W;
     let benchmark = Benchmark::CG(class);
     let benchmark_params = benchmark.cg_get_difficulty();
 
@@ -30,7 +30,12 @@ fn main() {
     // Create the matrix and the vectors
     let mut x:Vec<f64> = vec![1.0; n];
     let mut z:Vec<f64> = vec![0.0; n];
+
+    let antes = Instant::now();
     let A = makea(n, non_zeros, lambda);
+    let agora = Instant::now();
+    show_time((agora - antes).borrow());
+
 
     let sum = A.values.iter().fold(0.0, |acumulated, item| acumulated + item.0);
     println!("Sum of nonzeros {sum}");
@@ -65,12 +70,8 @@ fn main() {
     show_time((now - before).borrow());
 
     // Verification part
-    let zeta_reference = 8.5971775078648;   // Value for S class
-    // let zeta_reference = 17.130235054029;    // Value for A class
-    // let zeta_reference = 22.712745482631;   // Values for B class
-    let epsilon = 1.0e-10;
-    let error = (zeta - zeta_reference).abs();
-    if  error <= epsilon {
+    
+    if  benchmark.cg_verify(zeta) {
         println!("Verification SUCESSFULL");
     }
     else {
@@ -78,7 +79,6 @@ fn main() {
     }
 
     println!("zeta {zeta}");
-    println!("error {error}");
 }
 
 const CONJUGATE_GRADIENT_ITERATIONS :u32 = 25;
