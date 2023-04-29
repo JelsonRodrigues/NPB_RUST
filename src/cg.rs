@@ -2,6 +2,7 @@ mod commom;
 
 use commom::random::Random;
 use commom::classes::Class;
+use commom::benchmarks::Benchmark;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::ops::Index;
@@ -15,25 +16,18 @@ use scoped_pool::Pool;
 const SEED: u64 = 314_159_265;
 
 fn main() {
-    // Values for the S class
-    let n:usize = 1400;
-    let iterations = 15;
-    let lambda = 10.0;
-    let non_zeros = 7;
+    // Setup benchmark values
+    // todo!("Read class from arguments");
+    let class = Class::A;
+    let benchmark = Benchmark::CG(class);
+    let benchmark_params = benchmark.cg_get_difficulty();
 
-    // // Values for A class
-    // let n:usize = 14000;
-    // let iterations = 15;
-    // let lambda = 20.0;
-    // let non_zeros = 11;
+    let n:usize = benchmark_params.0;
+    let iterations = benchmark_params.1;
+    let lambda = benchmark_params.2;
+    let non_zeros = benchmark_params.3;
 
-    // // Values for B class
-    // let n:usize = 75000;
-    // let iterations = 75;
-    // let lambda = 60.0;
-    // let non_zeros = 13;
-
-    // Create the matix and the vectors
+    // Create the matrix and the vectors
     let mut x:Vec<f64> = vec![1.0; n];
     let mut z:Vec<f64> = vec![0.0; n];
     let A = makea(n, non_zeros, lambda);

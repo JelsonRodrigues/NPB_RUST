@@ -16,7 +16,7 @@ fn main() {
     // todo!("Read class from arguments");
     let class = Class::A;
     let benchmark = Benchmark::EP(class);
-    let n = benchmark.get_difficulty();
+    let n = benchmark.ep_get_difficulty();
     
     // todo!("Read number of threads to use from arguments");
     let number_of_threads = available_parallelism().expect("Unable to get the total number of threads").get() as u64;
