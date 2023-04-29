@@ -18,7 +18,7 @@ const SEED: u64 = 314_159_265;
 fn main() {
     // Setup benchmark values
     // todo!("Read class from arguments");
-    let class = Class::W;
+    let class = Class::A;
     let benchmark = Benchmark::CG(class);
     let benchmark_params = benchmark.cg_get_difficulty();
 
@@ -374,16 +374,18 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
     let cond_number = 0.1;
     let ratio = get_ratio(n, cond_number);
     
-    // sparse_matrix.initialize_to_zero((row_non_zeros + 1) * (row_non_zeros + 1));
+    sparse_matrix.initialize_to_zero();
+    update_row_indexes(&mut sparse_matrix, &sparse_matrix_aux);
+
     for row_number in 0..n {
         let row_as_sparse_vector = sparse_matrix_aux.get_row_as_sparse_vector(row_number);
 
-        outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, &mut sparse_matrix, scale);
-        // sparse_matrix.outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, scale);
+        // outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, &mut sparse_matrix, scale);
+        sparse_matrix.outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, scale);
 
         scale *= ratio;
     }
-    // sparse_matrix.desfragmentate();
+    sparse_matrix.desfragmentate();
 
     // Traverse the diagonal adding 0.1 and subtracting the shift (lambda)
     for index in 0..n {
@@ -392,6 +394,25 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
     }
 
     return sparse_matrix;
+}
+
+fn update_row_indexes(matrix:&mut SparseMatrix, aux_matrix:&SparseMatrix) {
+    matrix.rows_pointer.fill(0);
+    for i in 0..aux_matrix.rows {
+        let start_row = aux_matrix.rows_pointer[i];
+        let end_row = aux_matrix.rows_pointer[i+1];
+        let row_lenght = end_row - start_row;
+        for j in start_row..end_row {
+            matrix.rows_pointer[aux_matrix.values[j].1] += row_lenght;
+        }
+    }
+    let mut sum = 0;
+    for i in 0..matrix.rows_pointer.len() {
+        let copy = matrix.rows_pointer[i];
+        matrix.rows_pointer[i] = sum;
+        sum += copy; 
+    }
+
 }
 
 fn outer_product_sum_on_sparse_matrix(column_vector : &[(f64, usize)], row_vector : &[(f64, usize)], sparse_matrix : &mut SparseMatrix, scale:f64) {
@@ -492,14 +513,9 @@ impl SparseMatrix {
     a.desfragmentate();
      */
 
-    pub fn initialize_to_zero(&mut self, max_non_zeros_per_row:usize) {
+    pub fn initialize_to_zero(&mut self) {
         self.values = vec![(0.0, 0); self.values.capacity()];
-
-        let mut value = 0;
-        for i in &mut self.rows_pointer {
-            *i = value;
-            value += max_non_zeros_per_row;
-        }
+        self.rows_pointer = vec![0; self.rows_pointer.capacity()];
     }
 
     pub fn desfragmentate(&mut self) {
