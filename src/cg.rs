@@ -15,16 +15,16 @@ const SEED: u64 = 314_159_265;
 
 fn main() {
     // Values for the S class
-    // let n:usize = 1400;
-    // let iterations = 15;
-    // let lambda = 10.0;
-    // let non_zeros = 7;
-
-    // Values for A class
-    let n:usize = 14000;
+    let n:usize = 1400;
     let iterations = 15;
-    let lambda = 20.0;
-    let non_zeros = 11;
+    let lambda = 10.0;
+    let non_zeros = 7;
+
+    // // Values for A class
+    // let n:usize = 14000;
+    // let iterations = 15;
+    // let lambda = 20.0;
+    // let non_zeros = 11;
 
     // // Values for B class
     // let n:usize = 75000;
@@ -70,8 +70,8 @@ fn main() {
     show_time((now - before).borrow());
 
     // Verification part
-    // let zeta_reference = 8.5971775078648;   // Value for S class
-    let zeta_reference = 17.130235054029;    // Value for A class
+    let zeta_reference = 8.5971775078648;   // Value for S class
+    // let zeta_reference = 17.130235054029;    // Value for A class
     // let zeta_reference = 22.712745482631;   // Values for B class
     let epsilon = 1.0e-10;
     let error = (zeta - zeta_reference).abs();
@@ -330,7 +330,8 @@ fn get_ratio(n:usize, cond:f64) -> f64 {
 // Generate a sparse matrix represented as CSM with
 // a given condition number, main diagonal shift and total number of non zeros
 fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
-    let max_non_zeros:usize = n * (row_non_zeros + 1) * (row_non_zeros + 1);
+    let max_non_zeros_final_matrix:usize =  n * (row_non_zeros + 1) * (row_non_zeros + 1); 
+    let max_non_zeros_sparse_vectors:usize = n * (row_non_zeros + 1);
     
     // Obtain the smallest power of two that is greater or equal n
     let power_of_two:usize = n.next_power_of_two();
@@ -340,7 +341,7 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
     // an array of randomly generated sparse vectors
 
     let mut sparse_matrix_aux = SparseMatrix::new(n, n);
-    sparse_matrix_aux.reserve_capacity(max_non_zeros);
+    sparse_matrix_aux.reserve_capacity(max_non_zeros_sparse_vectors);
     let mut random_index:usize;
     let mut random_value:f64;
     
@@ -370,13 +371,10 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
         // Add 1/2 to the diagonal
         sparse_matrix_aux.set_index_to_value(0.5, row, row);
     } 
-    if sparse_matrix_aux.get_non_zero_count() > max_non_zeros {
-        panic!("Number of non-zeros generated for the matrix exceeded the maximum defined.\n
-        Non-zero count: {}, maximum non-zeros: {}", sparse_matrix_aux.get_non_zero_count(), max_non_zeros);
-    }
     
     // Here the sparse matrix will be constructed
     let mut sparse_matrix = SparseMatrix::new(n, n);
+    sparse_matrix.reserve_capacity(max_non_zeros_final_matrix);
     let mut scale = 1.0;
     let cond_number = 0.1;
     let ratio = get_ratio(n, cond_number);
@@ -495,6 +493,8 @@ impl SparseMatrix {
         let row_start = self.rows_pointer[row];
         let row_end = self.rows_pointer[row + 1];
 
+
+        /* Aqui eu devo utilizar uma busca binaria para acelerar */
         // Seach for the column in the row
         let mut index = 0;
         let mut found = false;
@@ -525,6 +525,7 @@ impl SparseMatrix {
                 }
             }
             
+            /* Aqui eu nao posso atualizar tudo ate o final, utilizar alguma forma de verificacao */
             let rows_pointer_len = self.rows_pointer.len();
             for index in (row + 1)..rows_pointer_len {
                 self.rows_pointer[index] += 1;
@@ -548,10 +549,9 @@ impl Index<(usize, usize)> for SparseMatrix {
 
             // This line lengh is not 0
             if end - start > 0 {
-                for (value, col) in &self.values[start..end] {
-                    if col == &index.1 {
-                        return value;
-                    }
+                let result_search = &self.values[start..end].binary_search_by(|value| value.1.cmp(&index.1));
+                if let Ok(index_found_from_begining_of_slice) = result_search {
+                    return &self.values[*index_found_from_begining_of_slice + start].0;
                 }
             }
         }
