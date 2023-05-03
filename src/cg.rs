@@ -10,7 +10,7 @@ use std::time::Instant;
 use std::vec;
 use commom::timer::show_time;
 
-use rayon::{prelude::*, ThreadPool};
+use rayon::prelude::*;
 
 // Value from the nasa paper
 const SEED: u64 = 314_159_265;
@@ -31,10 +31,11 @@ fn main() {
     let mut x:Vec<f64> = vec![1.0; n];
     let mut z:Vec<f64> = vec![0.0; n];
 
-    let antes = Instant::now();
+    println!("Creating sparse matrix...");
+    let before = Instant::now();
     let A = makea(n, non_zeros, lambda);
-    let agora = Instant::now();
-    show_time((agora - antes).borrow());
+    let now = Instant::now();
+    show_time((now - before).borrow());
 
     let sum = A.values.iter().fold(0.0, |acumulated, item| acumulated + item.0);
     println!("Sum of nonzeros {sum}");
@@ -101,14 +102,11 @@ fn outer_loop_parallel(
     lambda: f64
 ) -> f64 {
     let mut zeta = 0.0;
-    let mut rayon_pool = rayon::ThreadPoolBuilder::new()
-                                .build()
-                                .expect("Error creating ThreadPool");
 
     // Main loop
     for i in 0..iterations {
         // solve Az = x 
-        let r = conjugate_gradient_parallel(A, z, x, r, p, q, &mut rayon_pool);
+        let r = conjugate_gradient_parallel(A, z, x, r, p, q);
 
         // (x * z, z * z)
         let (x_inner_product_z, z_inner_product_z) = x.par_iter()
@@ -129,7 +127,6 @@ fn outer_loop_parallel(
         let magnitude_z = z_inner_product_z.sqrt();
         x.par_iter_mut().zip_eq(z.par_iter())
                         .for_each(|(x, z)| {*x = z / magnitude_z;});
-        
     }
     return zeta;
 }
@@ -158,28 +155,28 @@ fn conjugate_gradient(
 
     for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
         // q = Ap
-        A.multiply_by_vector(&p, q);
+        A.multiply_by_vector(p, q);
 
         // alpha = rho / (p * q)
-        let alpha = rho / multiply_vector_by_column(&p, &q, 1.0);
+        let alpha = rho / multiply_vector_by_column(p, q, 1.0);
 
         // z = z + alpha * p
-        multiply_add_self(z, &p, alpha);
+        multiply_add_self(z, p, alpha);
 
         // rho_0 = rho
         let rho_0 = rho;
 
         // r = r - alpha * q 
-        multiply_add_self(r, &q, -alpha);
+        multiply_add_self(r, q, -alpha);
 
         // rho = r * r
-        rho = multiply_vector_by_column(&r, &r, 1.0);
+        rho = multiply_vector_by_column(r, r, 1.0);
 
         // beta = rho / rho_0
         let beta = rho / rho_0;
         
         // p = r + beta * p
-        add_multiply_self(p, &r, beta);
+        add_multiply_self(p, r, beta);
     }
 
     // The operation I'm performing here is r = || x - Az ||
@@ -201,7 +198,6 @@ fn conjugate_gradient_parallel(
     r:&mut Vec<f64>, 
     p:&mut Vec<f64>, 
     q:&mut Vec<f64>,
-    pool: &mut ThreadPool
 ) -> f64  
 {
     /* Parallel Section */
@@ -226,10 +222,7 @@ fn conjugate_gradient_parallel(
         |a, b| {a + b}
     );
 
-    /* End Parallel Section */
-
-    for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
-        /* Paralel section */        
+    for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {    
         let p_inner_product_q = A.rows_pointer.par_windows(2)
         .zip_eq(q.par_iter_mut().enumerate())
                 .map(|(vec_index, (index, q))| {
@@ -240,9 +233,6 @@ fn conjugate_gradient_parallel(
                     for (value, col) in &A.values[start_row..end_row] {
                         sum += value * p[*col];
                     }
-                    // let sum = A.values[start_row..end_row].par_iter()
-                    // .map(|(value, col)| {value + p[*col]})
-                    // .reduce(|| 0.0 , |a,b| a+b);
 
                     *q = sum;
                     return *q * p[index];
@@ -251,8 +241,7 @@ fn conjugate_gradient_parallel(
                     || 0.0, 
                     |a, b| {a+b}
                 );
-        /* END Parallel Section */
-        
+
         let alpha = rho / p_inner_product_q;
 
         let rho_0 = rho;
@@ -285,17 +274,11 @@ fn conjugate_gradient_parallel(
         });
     }
 
-    /* Paralell Section */
-
     let mag = A.rows_pointer.par_windows(2)
     .enumerate()
     .map(|(index, indexes_row)| {
         let start_row = indexes_row[0];
         let end_row = indexes_row[1];
-
-        // let sum = A.values[start_row..end_row].par_iter()
-        // .map(|(value, col)| {value * z[*col]})
-        // .reduce (||0.0, |a, b| a+b);
 
         let mut sum = 0.0;
         for (value, col) in &A.values[start_row..end_row] {
@@ -307,8 +290,6 @@ fn conjugate_gradient_parallel(
     .reduce(||0.0, |a, b| a+b);
 
     return mag;
-
-    /* END Parallel Section */
 }
 
 // Return the multiplication of a * (b*scalar)
@@ -421,17 +402,15 @@ fn makea(n:usize, row_non_zeros:usize, lambda:f64) -> SparseMatrix {
     for row_number in 0..n {
         let row_as_sparse_vector = sparse_matrix_aux.get_row_as_sparse_vector(row_number);
 
-        // outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, &mut sparse_matrix, scale);
         sparse_matrix.outer_product_sum_on_sparse_matrix(row_as_sparse_vector, row_as_sparse_vector, scale);
 
         scale *= ratio;
     }
-    sparse_matrix.desfragmentate();
-
+    
     // Traverse the diagonal adding 0.1 and subtracting the shift (lambda)
     for index in 0..n {
         // sparse_matrix.set_index_to_value(sparse_matrix[(index, index)] + 0.1 - lambda, index, index);
-        sparse_matrix.add_index_with_value_optimized(0.1 - lambda, index, index);
+        sparse_matrix.add_index_with_value(0.1 - lambda, index, index);
     }
 
     return sparse_matrix;
@@ -455,16 +434,6 @@ fn update_row_indexes(matrix:&mut SparseMatrix, aux_matrix:&SparseMatrix) {
     }
 
 }
-
-fn outer_product_sum_on_sparse_matrix(column_vector : &[(f64, usize)], row_vector : &[(f64, usize)], sparse_matrix : &mut SparseMatrix, scale:f64) {
-    for (row_value, index_row) in column_vector {
-        for (col_value, index_col) in row_vector {
-            // sparse_matrix.set_index_to_value(sparse_matrix[(*index_row, *index_col)] + row * col * scale, *index_row, *index_col);
-            sparse_matrix.add_index_with_value(row_value * col_value * scale, *index_row, *index_col);
-        }
-    }
-}
-
 
 // A sparse matrix CSR compressed
 struct SparseMatrix {
@@ -545,44 +514,13 @@ impl SparseMatrix {
     }
 
     /* Otimization functions */
-    /*
-    The order to call is
-    let mut a = SparseMatrix::new();
-    a.reserve_capacity(value);
-    a.initialize_to_zero(max_row);
-    a.add_position();
-    a.desfragmentate();
-     */
 
     pub fn initialize_to_zero(&mut self) {
         self.values = vec![(0.0, 0); self.values.capacity()];
         self.rows_pointer = vec![0; self.rows_pointer.capacity()];
     }
 
-    pub fn desfragmentate(&mut self) {
-        let mut index_swap = 0;
-
-        for ind_row in 0..self.rows_pointer.len()-1 {
-            let row_start = self.rows_pointer[ind_row];
-            let row_end = self.rows_pointer[ind_row+1];
-
-            let new_row_start = index_swap;
-
-            for ind in row_start..row_end {
-                if self.values[ind].0 != 0.0 {
-                    self.values.swap(ind, index_swap);
-                    index_swap+=1;
-                }
-            }
-
-            self.rows_pointer[ind_row] = new_row_start;
-        }
-
-        let last_index = self.rows_pointer.len()-1;
-        self.rows_pointer[last_index] = index_swap;
-    }
-
-    pub fn add_index_with_value_optimized(&mut self, value:f64, row:usize, col:usize) {
+    pub fn add_index_with_value(&mut self, value:f64, row:usize, col:usize) {
         if self.rows <= row || self.columns <= col {
             panic!("Index [{row}][{col}] out of bounds!!!");
         }
@@ -612,7 +550,7 @@ impl SparseMatrix {
     fn outer_product_sum_on_sparse_matrix(&mut self, column_vector : &[(f64, usize)], row_vector : &[(f64, usize)], scale:f64) {
         for (row_value, index_row) in column_vector {
             for (col_value, index_col) in row_vector {
-                self.add_index_with_value_optimized(row_value * col_value * scale, *index_row, *index_col);
+                self.add_index_with_value(row_value * col_value * scale, *index_row, *index_col);
             }
         }
     }
@@ -634,32 +572,6 @@ impl SparseMatrix {
         match result_search {
             Ok(index_found) => {
                 self.values[row_start + index_found] = (value, col);
-            },
-            Err(index_to_insert) => {
-                self.values.insert(row_start + index_to_insert, (value, col));
-
-                /* Aqui eu nao posso atualizar tudo ate o final, utilizar alguma forma de verificacao */
-                let rows_pointer_len = self.rows_pointer.len();
-                for index in (row + 1)..rows_pointer_len {
-                    self.rows_pointer[index] += 1;
-                }
-            },
-        }
-    }
-
-    pub fn add_index_with_value(&mut self, value:f64, row:usize, col:usize) {
-        if self.rows <= row || self.columns <= col {
-            panic!("Index [{row}][{col}] out of bounds!!!");
-        }
-
-        let row_start = self.rows_pointer[row];
-        let row_end = self.rows_pointer[row + 1];
-
-        let result_search = &self.values[row_start..row_end].binary_search_by(|value| value.1.cmp(&col));
-
-        match result_search {
-            Ok(index_found) => {
-                self.values[row_start + index_found].0 += value;
             },
             Err(index_to_insert) => {
                 self.values.insert(row_start + index_to_insert, (value, col));
