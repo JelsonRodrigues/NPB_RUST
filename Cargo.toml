@@ -13,5 +13,4 @@ path = "src/cg.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-scoped-pool = "1.0.0"
-itertools = "0.10.5"
+rayon = "1.7.0"

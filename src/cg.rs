@@ -8,9 +8,9 @@ use std::cmp::Ordering;
 use std::ops::Index;
 use std::time::Instant;
 use std::vec;
-use std::{thread::{available_parallelism, JoinHandle}};
 use commom::timer::show_time;
-use scoped_pool::Pool;
+
+use rayon::{prelude::*, ThreadPool};
 
 // Value from the nasa paper
 const SEED: u64 = 314_159_265;
@@ -18,7 +18,7 @@ const SEED: u64 = 314_159_265;
 fn main() {
     // Setup benchmark values
     // todo!("Read class from arguments");
-    let class = Class::A;
+    let class = Class::B;
     let benchmark = Benchmark::CG(class);
     let benchmark_params = benchmark.cg_get_difficulty();
 
@@ -36,7 +36,6 @@ fn main() {
     let agora = Instant::now();
     show_time((agora - antes).borrow());
 
-
     let sum = A.values.iter().fold(0.0, |acumulated, item| acumulated + item.0);
     println!("Sum of nonzeros {sum}");
     
@@ -45,32 +44,13 @@ fn main() {
     let mut p:Vec<f64> = vec![0.0; n];
     let mut q:Vec<f64> = vec![0.0; n];
 
-    let pool = Pool::new(12);
-
     // Start timing
     let before = Instant::now();
-    let mut zeta = 0.0;
-    // Main loop
-    for i in 0..iterations {
-        // solve Az = x 
-        // let r = conjugate_gradient(&A, &mut z, &x, &mut r, &mut p, &mut q);
-        let r = conjugate_gradient_parallel(&A, &mut z, &x, &mut r, &mut p, &mut q, &pool);
-
-        // zeta = lambda + 1 / (x * z)
-        zeta = lambda + 1.0 / multiply_vector_by_column(&x, &z, 1.0);
-
-        // Print it, zeta, r
-        println!("Iteration = {:02}, ||r|| = {r:e}, zeta = {zeta:e}", i+1);
-
-        // x = z / ||z||
-        // Means that x will be a unit vector of z
-        replace_self(&mut x, &z, 1.0 / magnitude(&z));
-    }
+    let zeta = outer_loop_parallel(&A, &mut x, &mut z, &mut r, &mut p, &mut q, iterations, lambda);
     let now = Instant::now();
     show_time((now - before).borrow());
 
     // Verification part
-    
     if  benchmark.cg_verify(zeta) {
         println!("Verification SUCESSFULL");
     }
@@ -80,6 +60,80 @@ fn main() {
 
     println!("zeta {zeta}");
 }
+
+fn outer_loop_serial(
+    A :&SparseMatrix, 
+    x: &mut Vec<f64>,
+    z: &mut Vec<f64>,
+    r: &mut Vec<f64>,
+    p: &mut Vec<f64>,
+    q: &mut Vec<f64>,
+    iterations: usize,
+    lambda: f64
+) -> f64 {
+    let mut zeta = 0.0;
+    // Main loop
+    for i in 0..iterations {
+        // solve Az = x 
+        let r = conjugate_gradient(A, z, x, r, p, q);
+
+        // zeta = lambda + 1 / (x * z)
+        zeta = lambda + 1.0 / multiply_vector_by_column(x, z, 1.0);
+
+        // Print it, zeta, r
+        println!("Iteration = {:02}, ||r|| = {r:e}, zeta = {zeta:e}", i+1);
+
+        // x = z / ||z||
+        // Means that x will be a unit vector of z
+        replace_self(x, z, 1.0 / magnitude(&z));
+    }
+    return zeta;
+}
+
+fn outer_loop_parallel(
+    A :&SparseMatrix, 
+    x: &mut Vec<f64>,
+    z: &mut Vec<f64>,
+    r: &mut Vec<f64>,
+    p: &mut Vec<f64>,
+    q: &mut Vec<f64>,
+    iterations: usize,
+    lambda: f64
+) -> f64 {
+    let mut zeta = 0.0;
+    let mut rayon_pool = rayon::ThreadPoolBuilder::new()
+                                .build()
+                                .expect("Error creating ThreadPool");
+
+    // Main loop
+    for i in 0..iterations {
+        // solve Az = x 
+        let r = conjugate_gradient_parallel(A, z, x, r, p, q, &mut rayon_pool);
+
+        // (x * z, z * z)
+        let (x_inner_product_z, z_inner_product_z) = x.par_iter()
+                                    .zip_eq(z.par_iter())
+                                    .map(|(x, z)| {(x*z, z * z)})
+                                    .reduce(
+                                        || (0.0, 0.0),
+                                        |a, b| {(a.0 + b.0, a.1 + b.1)}
+                                    );
+        
+        // zeta = lambda + 1 / (x * z)
+        zeta = lambda + 1.0 / x_inner_product_z;
+
+        // Print it, zeta, r
+        println!("Iteration = {:02}, ||r|| = {r:e}, zeta = {zeta:e}", i+1);
+
+        // x = z / ||z||
+        let magnitude_z = z_inner_product_z.sqrt();
+        x.par_iter_mut().zip_eq(z.par_iter())
+                        .for_each(|(x, z)| {*x = z / magnitude_z;});
+        
+    }
+    return zeta;
+}
+
 
 const CONJUGATE_GRADIENT_ITERATIONS :u32 = 25;
 
@@ -140,8 +194,6 @@ fn conjugate_gradient(
     return magnitude(&r);
 }
 
-use itertools::izip;
-const CHUNK_SIZE:usize = 128;
 fn conjugate_gradient_parallel(
     A:&SparseMatrix, 
     z:&mut Vec<f64>, 
@@ -149,121 +201,110 @@ fn conjugate_gradient_parallel(
     r:&mut Vec<f64>, 
     p:&mut Vec<f64>, 
     q:&mut Vec<f64>,
-    pool: &Pool,
+    pool: &mut ThreadPool
 ) -> f64  
 {
     /* Parallel Section */
-    let mut rho = 0.0;
+
+    let x_iter = x.par_iter();
+    let r_iter = r.par_iter_mut();
+    let z_iter = z.par_iter_mut();
+    let p_iter = p.par_iter_mut();
     
-    let x_chunks = x.chunks(CHUNK_SIZE);
-    let r_chunks = r.chunks_mut(CHUNK_SIZE);
-    let z_chunks = z.chunks_mut(CHUNK_SIZE);
-    let p_chunks = p.chunks_mut(CHUNK_SIZE);
-
-    pool.scoped( move |scope| {
-        for (x_chunk, z_chunk, r_chunk, p_chunk) in izip!(x_chunks, z_chunks, r_chunks, p_chunks) {
-            scope.execute( move || {  
-                for (x, z, r, p) in izip!(x_chunk, z_chunk, r_chunk, p_chunk){
-                    *z = 0.0;
-                    *r = *x;
-                    *p = *x;
-                }
-            });
+    let mut rho = x_iter.zip_eq(r_iter)
+    .zip_eq(z_iter)
+    .zip_eq(p_iter)
+    .map(
+        |(((x, r), z), p)| {
+            *z = 0.0;
+            *r = *x;
+            *p = *x;
+            return x * x;
         }
-    });
-
-    for i in 0..x.len() {
-    //     z[i] = 0.0;
-    //     r[i] = x[i];
-    //     p[i] = x[i];
-        rho += x[i] * x[i];
-    }
+    ).reduce (
+        || 0.0,
+        |a, b| {a + b}
+    );
 
     /* End Parallel Section */
 
     for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
-        /* Paralel section */
-        let mut p_inner_product_q = 0.0;
-        for i in 0..A.rows {
-            let start_row = A.rows_pointer[i];
-            let end_row = A.rows_pointer[i+1];
+        /* Paralel section */        
+        let p_inner_product_q = A.rows_pointer.par_windows(2)
+        .zip_eq(q.par_iter_mut().enumerate())
+                .map(|(vec_index, (index, q))| {
+                    let start_row = vec_index[0];
+                    let end_row = vec_index[1];
 
-            let mut sum = 0.0;
-            for (value, col) in &A.values[start_row..end_row] {
-                sum += value * p[*col];
-            }
-            q[i] = sum;
-            p_inner_product_q += q[i] * p[i];
-        }
+                    let mut sum = 0.0;
+                    for (value, col) in &A.values[start_row..end_row] {
+                        sum += value * p[*col];
+                    }
+                    // let sum = A.values[start_row..end_row].par_iter()
+                    // .map(|(value, col)| {value + p[*col]})
+                    // .reduce(|| 0.0 , |a,b| a+b);
+
+                    *q = sum;
+                    return *q * p[index];
+                })
+                .reduce(
+                    || 0.0, 
+                    |a, b| {a+b}
+                );
         /* END Parallel Section */
         
         let alpha = rho / p_inner_product_q;
 
-        
-        let z_chunks = z.chunks_mut(CHUNK_SIZE);
-        let r_chunks = r.chunks_mut(CHUNK_SIZE);
-        let p_chunks = p.chunks_mut(CHUNK_SIZE);
-        let q_chunks = q.chunks_mut(CHUNK_SIZE);
-
-        pool.scoped( move |scope| {
-            for (z_chunk, r_chunk, p_chunk, q_chunk) in izip!(z_chunks, r_chunks, p_chunks, q_chunks) {
-                scope.execute( move || {  
-                    for (z, r, p, q) in izip!(z_chunk, r_chunk, p_chunk, q_chunk){
-                        *z += alpha * (*p);
-                        *r += -alpha * (*q);
-                    }
-                });
-            }
-        });
-
-        /* Paralell Section */
         let rho_0 = rho;
-        rho = 0.0;
-        for i in 0..x.len() {
-            // z[i] += alpha * p[i];
-            // r[i] += -alpha * q[i];
-            rho += r[i] * r[i];
-        }
-        /* END Parallel Section */
+        let z_iter = z.par_iter_mut();
+        let r_iter = r.par_iter_mut();
+        let p_iter = p.par_iter_mut();
+        let q_iter = q.par_iter_mut();
+
+        rho = z_iter.zip_eq(r_iter)
+        .zip_eq(p_iter)
+        .zip_eq(q_iter)
+        .map(
+            |(((z, r), p), q)| {
+                *z += alpha * (*p);
+                *r += -alpha * (*q);
+                return *r * *r;
+            }
+        )
+        .reduce(|| 0.0, |a, b| a + b);
 
         // beta = rho / rho_0
         let beta = rho / rho_0;
 
-        let r_chunks = r.chunks(CHUNK_SIZE);
-        let p_chunks = p.chunks_mut(CHUNK_SIZE);
+        let r_iter = r.par_iter();
+        let p_iter = p.par_iter_mut();
 
-        pool.scoped( move |scope| {
-            for (r_chunk, p_chunk) in izip!(r_chunks, p_chunks) {
-                scope.execute( move || {  
-                    for (r, p) in izip!(r_chunk, p_chunk){
-                        *p = *r + beta * *p;
-                    }
-                });
-            }
+        r_iter.zip_eq(p_iter)
+        .for_each(|(r, p)| {
+            *p = *r + beta * *p;
         });
-
-        /* Parallel Section */
-        // p = r + beta * p
-        // for i in 0..x.len() {
-        //     p[i] = r[i] + beta * p[i];
-        // }
-        /* END Parallel Section */
     }
-
 
     /* Paralell Section */
 
-    let mut mag = 0.0;
-    for i in 0..A.rows {
-        let start_row = A.rows_pointer[i];
-        let end_row = A.rows_pointer[i+1];
+    let mag = A.rows_pointer.par_windows(2)
+    .enumerate()
+    .map(|(index, indexes_row)| {
+        let start_row = indexes_row[0];
+        let end_row = indexes_row[1];
+
+        // let sum = A.values[start_row..end_row].par_iter()
+        // .map(|(value, col)| {value * z[*col]})
+        // .reduce (||0.0, |a, b| a+b);
 
         let mut sum = 0.0;
         for (value, col) in &A.values[start_row..end_row] {
             sum += value * z[*col];
         }
-        mag += (x[i] - sum).powi(2);
-    }
+
+        return (x[index] - sum).powi(2);
+    })
+    .reduce(||0.0, |a, b| a+b);
 
     return mag;
 
