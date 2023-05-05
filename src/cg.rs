@@ -18,7 +18,7 @@ const SEED: u64 = 314_159_265;
 fn main() {
     // Setup benchmark values
     // todo!("Read class from arguments");
-    let class = Class::B;
+    let class = Class::A;
     let benchmark = Benchmark::CG(class);
     let benchmark_params = benchmark.cg_get_difficulty();
 
@@ -381,10 +381,10 @@ fn makea(n: usize, row_non_zeros: usize, lambda: f64) -> SparseMatrix {
                     break;
                 }
             }
-            sparse_matrix_aux.set_index_to_value(random_value, row, random_index);
+            sparse_matrix_aux.set_index_to_value_without_updating_rows_pointer(random_value, row, random_index);
         }
         // Add 1/2 to the diagonal
-        sparse_matrix_aux.set_index_to_value(0.5, row, row);
+        sparse_matrix_aux.set_index_to_value_without_updating_rows_pointer(0.5, row, row);
     }
 
     // Here the sparse matrix will be constructed
@@ -418,6 +418,12 @@ fn makea(n: usize, row_non_zeros: usize, lambda: f64) -> SparseMatrix {
     sparse_matrix
 }
 
+/*
+This is an optimization function, before starting the creation of the final sparse matrix
+it will count the number of nonzeros that will be in each row based on the sparse vectors in the aux_matrix.
+That optimization allow to preallocate the exact needed space and use the add_index_with_value function
+By knowing beforehand the size of each row, its possible to make changes to only that slice in the final matrix.
+ */
 fn update_row_indexes(matrix: &mut SparseMatrix, aux_matrix: &SparseMatrix) {
     matrix.rows_pointer.fill(0);
     for i in 0..aux_matrix.rows {
@@ -531,6 +537,13 @@ impl SparseMatrix {
         self.rows_pointer = vec![0; self.rows_pointer.capacity()];
     }
 
+
+    /*
+    This function does not update the rows_pointer after the insertion, it's very
+    useful if you already know the number of nonzeros in each row.
+    The rows pointer should all be initialized with the correct value of the size of each row
+    and the vector holding the non zeros should already be fully alocated, and initialized with 0.0
+     */
     pub fn add_index_with_value(&mut self, value: f64, row: usize, col: usize) {
         if self.rows <= row || self.columns <= col {
             panic!("Index [{row}][{col}] out of bounds!!!");
@@ -574,6 +587,42 @@ impl SparseMatrix {
             }
         }
     }
+    /*
+    This function doesn't update the rows index, it is useful for insertion in only the last row.
+    After going to the next row, it should not be inserted in a row before with this method.
+     */
+
+    pub fn set_index_to_value_without_updating_rows_pointer(&mut self, value: f64, row: usize, col: usize) {
+        // Check if the index is already a non-zero value,
+        // if it is, then change the value
+
+        if self.rows <= row || self.columns <= col {
+            panic!("Index [{row}][{col}] out of bounds!!!");
+        }
+
+        if self.rows_pointer[row] >= self.rows_pointer[row+1] {
+            self.rows_pointer[row + 1] = self.rows_pointer[row];
+        }
+
+        let row_start = self.rows_pointer[row];
+        let row_end = self.rows_pointer[row + 1];
+
+        let result_search =
+            &self.values[row_start..row_end].binary_search_by(|value| value.1.cmp(&col));
+
+        match result_search {
+            Ok(index_found) => {
+                self.values[row_start + index_found] = (value, col);
+            }
+            Err(index_to_insert) => {
+                self.values
+                    .insert(row_start + index_to_insert, (value, col));
+
+                self.rows_pointer[row+1] += 1;
+            }
+        }
+    }
+
     /* End of otimization functions */
 
     pub fn set_index_to_value(&mut self, value: f64, row: usize, col: usize) {
@@ -598,7 +647,8 @@ impl SparseMatrix {
                 self.values
                     .insert(row_start + index_to_insert, (value, col));
 
-                /* Aqui eu nao posso atualizar tudo ate o final, utilizar alguma forma de verificacao */
+                // That part is very slow, because is necessary to update the rows pointer of all the 
+                // next rows
                 let rows_pointer_len = self.rows_pointer.len();
                 for index in (row + 1)..rows_pointer_len {
                     self.rows_pointer[index] += 1;
@@ -621,7 +671,7 @@ impl Index<(usize, usize)> for SparseMatrix {
             let end = self.rows_pointer[index.0 + 1];
 
             // This line lengh is not 0
-            if end - start > 0 {
+            if end > start {
                 let result_search =
                     &self.values[start..end].binary_search_by(|value| value.1.cmp(&index.1));
                 if let Ok(index_found_from_begining_of_slice) = result_search {
