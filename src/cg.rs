@@ -18,7 +18,7 @@ const SEED: u64 = 314_159_265;
 fn main() {
     // Setup benchmark values
     // todo!("Read class from arguments");
-    let class = Class::A;
+    let class = Class::B;
     let benchmark = Benchmark::CG(class);
     let benchmark_params = benchmark.cg_get_difficulty();
 
@@ -95,6 +95,8 @@ fn outer_loop_serial(
     zeta
 }
 
+const MIN_LEN : usize = 512;
+
 fn outer_loop_parallel(
     A: &SparseMatrix,
     x: &mut Vec<f64>,
@@ -110,24 +112,28 @@ fn outer_loop_parallel(
     // Main loop
     for i in 0..iterations {
         // solve Az = x
+        let bef = Instant::now();
         let r = conjugate_gradient_parallel(A, z, x, r, p, q);
-
+        let now = Instant::now();
+        
         // (x * z, z * z)
-        let (x_inner_product_z, z_inner_product_z) = x
-            .par_iter()
-            .zip_eq(z.par_iter())
-            .map(|(x, z)| (x * z, z * z))
-            .reduce(|| (0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
-
+        let (x_inner_product_z, z_inner_product_z) = 
+        (x.par_iter(), z.par_iter()).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .map(|(x, z)| (*x * *z, *z * *z))
+        .reduce(|| (0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
+    
         // zeta = lambda + 1 / (x * z)
         zeta = lambda + 1.0 / x_inner_product_z;
-
+        
         // Print it, zeta, r
-        println!("Iteration = {:02}, ||r|| = {r:e}, zeta = {zeta:e}", i + 1);
-
+        println!("Iteration = {:02}, \t||r|| = {r:.20e}, \tzeta = {zeta:.20e}, \ttime {}us", i + 1, (now - bef).as_micros());
+        
         // x = z / ||z||
         let magnitude_z = z_inner_product_z.sqrt();
-        x.par_iter_mut().zip_eq(z.par_iter()).for_each(|(x, z)| {
+        (x.par_iter_mut(), z.par_iter()).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .for_each(|(x, z)| {
             *x = z / magnitude_z;
         });
     }
@@ -200,18 +206,15 @@ fn conjugate_gradient_parallel(
     p: &mut Vec<f64>,
     q: &mut Vec<f64>,
 ) -> f64 {
-    /* Parallel Section */
-
     let x_iter = x.par_iter();
     let r_iter = r.par_iter_mut();
     let z_iter = z.par_iter_mut();
     let p_iter = p.par_iter_mut();
-
-    let mut rho = x_iter
-        .zip_eq(r_iter)
-        .zip_eq(z_iter)
-        .zip_eq(p_iter)
-        .map(|(((x, r), z), p)| {
+    
+    let mut rho = 
+        (x_iter, r_iter, z_iter, p_iter).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .map(|(x, r, z, p)| {
             *z = 0.0;
             *r = *x;
             *p = *x;
@@ -220,23 +223,22 @@ fn conjugate_gradient_parallel(
         .reduce(|| 0.0, |a, b| a + b);
 
     for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
-        let p_inner_product_q = A
-            .rows_pointer
-            .par_windows(2)
-            .zip_eq(q.par_iter_mut().enumerate())
-            .map(|(vec_index, (index, q))| {
-                let start_row = vec_index[0];
-                let end_row = vec_index[1];
+        let p_inner_product_q = 
+        q.par_iter_mut().enumerate()
+        .with_min_len(MIN_LEN)
+        .map(|(index, q)| {
+            let start_row = A.rows_pointer[index];
+            let end_row = A.rows_pointer[index+1];
 
-                let mut sum = 0.0;
-                for (value, col) in &A.values[start_row..end_row] {
-                    sum += value * p[*col];
-                }
+            let mut sum = 0.0;
+            for (value, col) in &A.values[start_row..end_row] {
+                sum += value * p[*col];
+            }
 
-                *q = sum;
-                *q * p[index]
-            })
-            .reduce(|| 0.0, |a, b| a + b);
+            *q = sum;
+            *q * p[index]
+        })
+        .reduce(|| 0.0, |a, b| a + b);
 
         let alpha = rho / p_inner_product_q;
 
@@ -245,17 +247,16 @@ fn conjugate_gradient_parallel(
         let r_iter = r.par_iter_mut();
         let p_iter = p.par_iter_mut();
         let q_iter = q.par_iter_mut();
-
-        rho = z_iter
-            .zip_eq(r_iter)
-            .zip_eq(p_iter)
-            .zip_eq(q_iter)
-            .map(|(((z, r), p), q)| {
-                *z += alpha * (*p);
-                *r += -alpha * (*q);
-                *r * *r
-            })
-            .reduce(|| 0.0, |a, b| a + b);
+        
+        rho = 
+        (z_iter, r_iter, p_iter, q_iter).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .map(|(z, r, p, q)| {
+            *z += alpha * (*p);
+            *r += -alpha * (*q);
+            *r * *r
+        })
+        .reduce(|| 0.0, |a, b| a + b);
 
         // beta = rho / rho_0
         let beta = rho / rho_0;
@@ -263,25 +264,26 @@ fn conjugate_gradient_parallel(
         let r_iter = r.par_iter();
         let p_iter = p.par_iter_mut();
 
-        r_iter.zip_eq(p_iter).for_each(|(r, p)| {
+        (r_iter, p_iter).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .for_each(|(r, p)| {
             *p = *r + beta * *p;
         });
     }
 
-    let mag = A
-        .rows_pointer
-        .par_windows(2)
-        .enumerate()
-        .map(|(index, indexes_row)| {
-            let start_row = indexes_row[0];
-            let end_row = indexes_row[1];
+    let mag = 
+        x.par_iter().enumerate()
+        .with_min_len(MIN_LEN)
+        .map(|(index, x_value)| {
+            let start_row = A.rows_pointer[index];
+            let end_row = A.rows_pointer[index+1];
 
             let mut sum = 0.0;
             for (value, col) in &A.values[start_row..end_row] {
                 sum += value * z[*col];
             }
 
-            (x[index] - sum).powi(2)
+            (x_value - sum).powi(2)
         })
         .reduce(|| 0.0, |a, b| a + b);
 
