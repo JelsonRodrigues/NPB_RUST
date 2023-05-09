@@ -95,6 +95,8 @@ fn outer_loop_serial(
     zeta
 }
 
+const MIN_LEN : usize = 512;
+
 fn outer_loop_parallel(
     A: &SparseMatrix,
     x: &mut Vec<f64>,
@@ -110,24 +112,28 @@ fn outer_loop_parallel(
     // Main loop
     for i in 0..iterations {
         // solve Az = x
+        let bef = Instant::now();
         let r = conjugate_gradient_parallel(A, z, x, r, p, q);
-
+        let now = Instant::now();
+        
         // (x * z, z * z)
-        let (x_inner_product_z, z_inner_product_z) = x
-            .par_iter()
-            .zip_eq(z.par_iter())
-            .map(|(x, z)| (x * z, z * z))
-            .reduce(|| (0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
-
+        let (x_inner_product_z, z_inner_product_z) = 
+        (x.par_iter(), z.par_iter()).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .map(|(x, z)| (*x * *z, *z * *z))
+        .reduce(|| (0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
+    
         // zeta = lambda + 1 / (x * z)
         zeta = lambda + 1.0 / x_inner_product_z;
-
+        
         // Print it, zeta, r
-        println!("Iteration = {:02}, ||r|| = {r:e}, zeta = {zeta:e}", i + 1);
-
+        println!("Iteration = {:02}, \t||r|| = {r:.20e}, \tzeta = {zeta:.20e}, \ttime {}us", i + 1, (now - bef).as_micros());
+        
         // x = z / ||z||
         let magnitude_z = z_inner_product_z.sqrt();
-        x.par_iter_mut().zip_eq(z.par_iter()).for_each(|(x, z)| {
+        (x.par_iter_mut(), z.par_iter()).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .for_each(|(x, z)| {
             *x = z / magnitude_z;
         });
     }
@@ -200,18 +206,15 @@ fn conjugate_gradient_parallel(
     p: &mut Vec<f64>,
     q: &mut Vec<f64>,
 ) -> f64 {
-    /* Parallel Section */
-
     let x_iter = x.par_iter();
     let r_iter = r.par_iter_mut();
     let z_iter = z.par_iter_mut();
     let p_iter = p.par_iter_mut();
-
-    let mut rho = x_iter
-        .zip_eq(r_iter)
-        .zip_eq(z_iter)
-        .zip_eq(p_iter)
-        .map(|(((x, r), z), p)| {
+    
+    let mut rho = 
+        (x_iter, r_iter, z_iter, p_iter).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .map(|(x, r, z, p)| {
             *z = 0.0;
             *r = *x;
             *p = *x;
@@ -220,23 +223,22 @@ fn conjugate_gradient_parallel(
         .reduce(|| 0.0, |a, b| a + b);
 
     for _ in 0..CONJUGATE_GRADIENT_ITERATIONS {
-        let p_inner_product_q = A
-            .rows_pointer
-            .par_windows(2)
-            .zip_eq(q.par_iter_mut().enumerate())
-            .map(|(vec_index, (index, q))| {
-                let start_row = vec_index[0];
-                let end_row = vec_index[1];
+        let p_inner_product_q = 
+        q.par_iter_mut().enumerate()
+        .with_min_len(MIN_LEN)
+        .map(|(index, q)| {
+            let start_row = A.rows_pointer[index];
+            let end_row = A.rows_pointer[index+1];
 
-                let mut sum = 0.0;
-                for (value, col) in &A.values[start_row..end_row] {
-                    sum += value * p[*col];
-                }
+            let mut sum = 0.0;
+            for (value, col) in &A.values[start_row..end_row] {
+                sum += value * p[*col];
+            }
 
-                *q = sum;
-                *q * p[index]
-            })
-            .reduce(|| 0.0, |a, b| a + b);
+            *q = sum;
+            *q * p[index]
+        })
+        .reduce(|| 0.0, |a, b| a + b);
 
         let alpha = rho / p_inner_product_q;
 
@@ -245,17 +247,16 @@ fn conjugate_gradient_parallel(
         let r_iter = r.par_iter_mut();
         let p_iter = p.par_iter_mut();
         let q_iter = q.par_iter_mut();
-
-        rho = z_iter
-            .zip_eq(r_iter)
-            .zip_eq(p_iter)
-            .zip_eq(q_iter)
-            .map(|(((z, r), p), q)| {
-                *z += alpha * (*p);
-                *r += -alpha * (*q);
-                *r * *r
-            })
-            .reduce(|| 0.0, |a, b| a + b);
+        
+        rho = 
+        (z_iter, r_iter, p_iter, q_iter).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .map(|(z, r, p, q)| {
+            *z += alpha * (*p);
+            *r += -alpha * (*q);
+            *r * *r
+        })
+        .reduce(|| 0.0, |a, b| a + b);
 
         // beta = rho / rho_0
         let beta = rho / rho_0;
@@ -263,25 +264,26 @@ fn conjugate_gradient_parallel(
         let r_iter = r.par_iter();
         let p_iter = p.par_iter_mut();
 
-        r_iter.zip_eq(p_iter).for_each(|(r, p)| {
+        (r_iter, p_iter).into_par_iter()
+        .with_min_len(MIN_LEN)
+        .for_each(|(r, p)| {
             *p = *r + beta * *p;
         });
     }
 
-    let mag = A
-        .rows_pointer
-        .par_windows(2)
-        .enumerate()
-        .map(|(index, indexes_row)| {
-            let start_row = indexes_row[0];
-            let end_row = indexes_row[1];
+    let mag = 
+        x.par_iter().enumerate()
+        .with_min_len(MIN_LEN)
+        .map(|(index, x_value)| {
+            let start_row = A.rows_pointer[index];
+            let end_row = A.rows_pointer[index+1];
 
             let mut sum = 0.0;
             for (value, col) in &A.values[start_row..end_row] {
                 sum += value * z[*col];
             }
 
-            (x[index] - sum).powi(2)
+            (x_value - sum).powi(2)
         })
         .reduce(|| 0.0, |a, b| a + b);
 
@@ -381,10 +383,10 @@ fn makea(n: usize, row_non_zeros: usize, lambda: f64) -> SparseMatrix {
                     break;
                 }
             }
-            sparse_matrix_aux.set_index_to_value(random_value, row, random_index);
+            sparse_matrix_aux.set_index_to_value_without_updating_rows_pointer(random_value, row, random_index);
         }
         // Add 1/2 to the diagonal
-        sparse_matrix_aux.set_index_to_value(0.5, row, row);
+        sparse_matrix_aux.set_index_to_value_without_updating_rows_pointer(0.5, row, row);
     }
 
     // Here the sparse matrix will be constructed
@@ -418,6 +420,12 @@ fn makea(n: usize, row_non_zeros: usize, lambda: f64) -> SparseMatrix {
     sparse_matrix
 }
 
+/*
+This is an optimization function, before starting the creation of the final sparse matrix
+it will count the number of nonzeros that will be in each row based on the sparse vectors in the aux_matrix.
+That optimization allow to preallocate the exact needed space and use the add_index_with_value function
+By knowing beforehand the size of each row, its possible to make changes to only that slice in the final matrix.
+ */
 fn update_row_indexes(matrix: &mut SparseMatrix, aux_matrix: &SparseMatrix) {
     matrix.rows_pointer.fill(0);
     for i in 0..aux_matrix.rows {
@@ -531,6 +539,13 @@ impl SparseMatrix {
         self.rows_pointer = vec![0; self.rows_pointer.capacity()];
     }
 
+
+    /*
+    This function does not update the rows_pointer after the insertion, it's very
+    useful if you already know the number of nonzeros in each row.
+    The rows pointer should all be initialized with the correct value of the size of each row
+    and the vector holding the non zeros should already be fully alocated, and initialized with 0.0
+     */
     pub fn add_index_with_value(&mut self, value: f64, row: usize, col: usize) {
         if self.rows <= row || self.columns <= col {
             panic!("Index [{row}][{col}] out of bounds!!!");
@@ -574,6 +589,42 @@ impl SparseMatrix {
             }
         }
     }
+    /*
+    This function doesn't update the rows index, it is useful for insertion in only the last row.
+    After going to the next row, it should not be inserted in a row before with this method.
+     */
+
+    pub fn set_index_to_value_without_updating_rows_pointer(&mut self, value: f64, row: usize, col: usize) {
+        // Check if the index is already a non-zero value,
+        // if it is, then change the value
+
+        if self.rows <= row || self.columns <= col {
+            panic!("Index [{row}][{col}] out of bounds!!!");
+        }
+
+        if self.rows_pointer[row] >= self.rows_pointer[row+1] {
+            self.rows_pointer[row + 1] = self.rows_pointer[row];
+        }
+
+        let row_start = self.rows_pointer[row];
+        let row_end = self.rows_pointer[row + 1];
+
+        let result_search =
+            &self.values[row_start..row_end].binary_search_by(|value| value.1.cmp(&col));
+
+        match result_search {
+            Ok(index_found) => {
+                self.values[row_start + index_found] = (value, col);
+            }
+            Err(index_to_insert) => {
+                self.values
+                    .insert(row_start + index_to_insert, (value, col));
+
+                self.rows_pointer[row+1] += 1;
+            }
+        }
+    }
+
     /* End of otimization functions */
 
     pub fn set_index_to_value(&mut self, value: f64, row: usize, col: usize) {
@@ -598,7 +649,8 @@ impl SparseMatrix {
                 self.values
                     .insert(row_start + index_to_insert, (value, col));
 
-                /* Aqui eu nao posso atualizar tudo ate o final, utilizar alguma forma de verificacao */
+                // That part is very slow, because is necessary to update the rows pointer of all the 
+                // next rows
                 let rows_pointer_len = self.rows_pointer.len();
                 for index in (row + 1)..rows_pointer_len {
                     self.rows_pointer[index] += 1;
@@ -621,7 +673,7 @@ impl Index<(usize, usize)> for SparseMatrix {
             let end = self.rows_pointer[index.0 + 1];
 
             // This line lengh is not 0
-            if end - start > 0 {
+            if end > start {
                 let result_search =
                     &self.values[start..end].binary_search_by(|value| value.1.cmp(&index.1));
                 if let Ok(index_found_from_begining_of_slice) = result_search {
